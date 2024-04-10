@@ -102,3 +102,28 @@ sys_yield(void)
 	yield();
 	return 0;
 }
+int
+sys_getlev(void)
+{
+	return myproc()->qlv;
+}
+int
+sys_setpriority(void)
+{
+
+}
+int
+sys_setmonopoly(void)
+{
+
+}
+int
+sys_monopolize(void)
+{
+
+}
+int
+sys_unmonopolize(void)
+{
+
+}

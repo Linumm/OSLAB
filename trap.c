@@ -13,6 +13,9 @@ struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
+//--P2--
+struct spinlock gtickslock;
+uint gticks; 		    // global ticks for 'priority boosting'
 
 void
 tvinit(void)
@@ -54,6 +57,17 @@ trap(struct trapframe *tf)
       ticks++; // +1 every about 10ms
       wakeup(&ticks);
       release(&tickslock);
+
+	  //--P2--
+	  acquire(&gtickslock);
+	  gticks++;
+	  if (gticks == 100) {
+		  gticks = 0;
+		  release(&gtickslock);
+		  priorboost();
+	  }
+	  else
+		  release(&gtickslock);
     }
     lapiceoi();
     break;
@@ -78,12 +92,6 @@ trap(struct trapframe *tf)
             cpuid(), tf->cs, tf->eip);
     lapiceoi();
     break;
-
-	// lab04 - int 128 : print interrupt happened
-  case 128:
-	cprintf("user interrupt 128 called!\n");
-	exit();
-	break;
 
   //PAGEBREAK: 13
   default:
@@ -111,7 +119,10 @@ trap(struct trapframe *tf)
   // If interrupts were on while locks held, would need to check nlock.
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER) {
-    yield(); // now this code yield every 1 tick
+	  //--P2--
+	  if (myproc()->qlv < 4 && 
+		  ticks - myproc()->rst == myproc()->qlv * 2 + 2)
+		  yield();
   }
 
   // Check if the process has been killed since we yielded

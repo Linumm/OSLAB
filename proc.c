@@ -10,6 +10,7 @@
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
+  //--P2--
   int q_mode; // indicator of what queue mode are currently in use, 0: MLFQ, 1: MoQ
 } ptable;
 
@@ -72,23 +73,15 @@ myproc(void) {
 // state required to run in the kernel.
 // Otherwise return 0.
 static struct proc*
-allocproc(void)
-{
-  struct proc *p;
-  char *sp;
 
-  acquire(&ptable.lock);
-
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == UNUSED)
-      goto found;
-
-  release(&ptable.lock);
-  return 0;
 
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
+  //--P2--
+  p->rst = -1; // rst -1 means it's EMBRYO process
+  p->priority = 0;
+  p->qlv = 0; // EMBRYO process first goes to L0Queue
 
   release(&ptable.lock);
 
