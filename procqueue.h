@@ -2,10 +2,11 @@
 
 // MLFQ:
 // 4-level queue, 0~2: RR, 3: RR+Prior
-struct mlfq {
+struct mlfq{
 	struct spinlock lock;			// lock
-	struct proc queue[3][NPROC];	// 4-lv process array 
+	struct proc* queue[3][NPROC];	// 4-lv process array 
 	int toplv;						// top lv queue which is not empty in flow
+	int recentidx; 					// recent choosen process's position in queue
 }
 
 

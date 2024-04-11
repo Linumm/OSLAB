@@ -40,7 +40,7 @@ qdemote()
 			p->qlv = 3;
 			qinsert(3, p);
 		case 3:
-			if (p->priority > 0)
+			if(p->priority > 0)
 				p->priority--;
 		default:
 			break;
@@ -48,6 +48,41 @@ qdemote()
 	return;
 }
 
+// Find the next process target in the queue.
+// if none in current level, go down.
+// if upper level has any process, go up.
+// Standard policy is to find RUNNABLE procs in one loop search
+// return: index of target process in toplv queue
+int
+qfindnext()
+{
+	struct proc* p;
+	int foundflag = 0;
+	int i;
+	for(;;){
+	  // from recent choosen process's idx, search
+	  for(i = recentidx+1; i < NPROC; i++){
+		p = mlfq.queue[mlfq.toplv][i];
+		if(p->state == RUNNABLE){
+		  mlfq.recentidx = i;
+		  foundflag = 1;
+		  return i;
+		}
+	  }	
+	// search the remain part of current queue (front part of recentidx)
+	  for(i = 0; i <= recentidx; i++){
+	    p = mlfq.queue[mlfq.toplv][i];
+	    if(p->state == RUNNABLE){
+		  mlfq.recentidx = i;
+		  foundflag = 1;
+		  return i;
+	    }
+	  }
+	  if(toplv == 3) {} // WHAT IF NO PROCESS RUNNABLE? > THINK
+	  toplv++;
+	}
+	return 0;
+}
 void
 qscheduler(void)
 {
@@ -61,9 +96,9 @@ qscheduler(void)
 
 		acquire(&mlfq.lock);
 		while(1){
-			p = qfindnext();
-			
-			if (p == 0){
+			int idx = qfindnext();
+			p = mlfq.queue[mlfq.toplv][idx];
+			if(p == 0){
 				//
 			}
 
