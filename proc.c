@@ -11,7 +11,10 @@ struct {
   struct spinlock lock;
   struct proc proc[NPROC];
   //--P2--
-  int q_mode; // indicator of what queue mode are currently in use, 0: MLFQ, 1: MoQ
+  struct proc* mlfq[4][NPROC];	// mlfq multi-level array (0 is the highest)
+  int qtoplv;					// mlfq current top level prior queue in flow
+  int ismlfq; 					// queue mode indicator, mlfq: 1, moq: 0
+  int recentidx[4];				// recent choosen process's index in each lv queue
 } ptable;
 
 static struct proc *initproc;
@@ -19,7 +22,7 @@ static struct proc *initproc;
 int nextpid = 1;
 extern void forkret(void);
 extern void trapret(void);
-
+extern int sys_uptime(void);	// to get process's cpu-on time(tick)
 static void wakeup1(void *chan);
 
 void
@@ -73,7 +76,19 @@ myproc(void) {
 // state required to run in the kernel.
 // Otherwise return 0.
 static struct proc*
+allocproc(void)
+{
+  struct proc *p;
+  char *sp;
 
+  acquire(&ptable.lock);
+
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+	if(p->state == UNUSED)
+	  goto found;
+
+  release(&ptable.lock);
+  return 0;
 
 found:
   p->state = EMBRYO;
@@ -525,4 +540,114 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+
+//--P2--
+// mlfq control functions
+
+// Delete the process from target queue
+void
+qdelete(int qlv, struct proc* p)
+{
+
+}
+
+// Insert the process to the target queue
+void
+qinsert(int qlv, struct proc* p)
+{
+
+}
+
+// Demote the yielded process queue level
+void
+qdemote()
+{
+  struct proc *p = myproc();
+  p->rst = 0;
+  p->state = RUNNABLE;
+
+  switch(p->qlv){
+	case 0:
+	  qdelete(0, p);
+	  p->qlv = p->pid % 2;
+	  qinsert(p->qlv, p);
+	  break;
+	case 1, 2:
+	  qdelete(p->plv, p);
+	  p->qlv = 3;
+	  qinsert(3, p);
+	  break;
+	case 3:
+	  if(p->priority > 0)
+		p->priority--;
+	  break;
+	default:
+	  break;
+}
+
+// Find the next process target in the queue.
+// if none, go down. if upper has, go up.
+// one loop searching for RUNNABLE process. 
+// return: index of target process in toplv queue.
+int
+qfindnext()
+{
+  struct proc* p;
+  int i;
+  for(;;){
+	// if now in L3 queue, priority should be checked while in search.
+	if(ptable.toplv == 3)
+		break;
+
+	// search starts from recentidx
+	for(i = recentidx[ptable.toplv]+1; i < NPROC; i++){
+	  p = ptable.mlfq[ptable.toplv][i];
+	  if(!p && p->state == RUNNABLE){
+		ptable.recentidx[ptable.toplv] = i;
+		return i;
+	  }
+	}
+	// search the remain part of current lv queue
+	for(i = 0; i <= recentidx; i++){ // think if i should also check recentidx procs
+	  p = ptable.mlfq[ptable.toplv][i];
+	  if(!p && p->state == RUNNABLE){
+		ptable.recentidx[ptable.toplv] = i;
+		return i;
+	  }
+	}
+	// now none procs RUNNABLE in current lv queue, go down
+	ptable.toplv++;
+  }
+  
+  // Now in L3 queue
+  int maxp = -1;
+  int maxi = -1;
+  for(i = recentidx[3]+1; i < NPROC; i++){
+	p = ptable.mlfq[3][i];
+	if(!p && p->state == RUNNABLE && p->priority > maxp){
+	  maxp = p->priority;
+	  maxi = i;
+	}
+  }
+  // search the remain part
+  for(i = 0; i <= recentidx[3]; i++){
+	p = ptable.mlfq[3][i];
+	if(!p && p->state == RUNNABLE && p->priority > maxp){
+	  maxp= p->priority;
+	  maxi = i;
+	}
+  }
+  // what if no process RUNNABLE in entire queue right now?
+  // need to care about deadlock (->maybe care in scheduler())
+  if(maxi == -1){
+	// Reset all recentidx so that accessing get faster after enqueue from 0
+	for(int j=0; j<4; j++)
+	  ptable.recentidx[j] = 0;
+	return -1;
+  }
+  
+  ptable.recentidx[ptable.toplv] = maxi;
+  return maxi;
 }
