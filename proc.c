@@ -16,8 +16,8 @@ struct {
   int ismlfq = 1;				// queue mode indicator, mlfq: 1, moq: 0
   int recentidx[4];				// recent choosen process's index in each lv queue
   
-  int nextmoqid = 0;			// next moq id to assign
-  int recentmoqid;				// recent choosen moq process's id;
+  int nextmoqid = 1;			// next moq id to assign
+  int recentmoqid = 0;			// recent choosen moq process's id;
   int moqsize = 0;				// to check if moq is empty
 } ptable;
 
@@ -356,7 +356,10 @@ scheduler(void)
 	// from this moment, not interruptable on this cpu.
 	if(ptable.ismlfq){ 	// MLFQ mode
 	  targetidx = qfindnext();
-	  if(targetidx == -1) continue;
+	  if(targetidx == -1){
+		release(&ptable.lock);
+		continue;
+	  }
 	  p = ptable.mlfq[ptable.toplv][targetidx];
 	}
 	else{ 				// MOQ mode
