@@ -52,8 +52,9 @@ struct proc {
   //--P2--
   uint rst;					   // Running start ticks record
   int priority;				   // Priority in L3Queue
-  int qlv;					   // What level of queue currently in
+  int qlv;					   // What level of queue currently in mlfq
   int qidx;					   // index in current queue level
+  int moqid;				   // moq order id, if -1(initial): not in moq 
 };
 
 // Process memory is laid out contiguously, low addresses first:

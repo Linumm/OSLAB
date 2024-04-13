@@ -14,7 +14,6 @@ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
 //--P2--
-struct spinlock gtickslock;
 uint gticks; 		    // global ticks for 'priority boosting'
 
 void
@@ -55,19 +54,15 @@ trap(struct trapframe *tf)
     if(cpuid() == 0){
       acquire(&tickslock); // mutual exclusively change 'ticks'
       ticks++; // +1 every about 10ms
+	  gticks++; //  p2
       wakeup(&ticks);
-      release(&tickslock);
-
-	  //--P2--
-	  acquire(&gtickslock);
-	  gticks++;
-	  if (gticks == 100) {
-		  gticks = 0;
-		  release(&gtickslock);
-		  priorboost();
+	  
+	  // Priority boost case
+	  if(gticks == 100){
+		gticks = 0;
+		priorityboost();
 	  }
-	  else
-		  release(&gtickslock);
+      release(&tickslock);
     }
     lapiceoi();
     break;
@@ -120,9 +115,11 @@ trap(struct trapframe *tf)
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER) {
 	  //--P2--
-	  if (myproc()->qlv < 4 && 
-		  ticks - myproc()->rst == myproc()->qlv * 2 + 2)
-		  yield();
+	  // MOQ : skip. just waiting until the proc exit.
+	  // MLFQ : time quantum check
+	  if(myproc()->moqid == -1 && myproc()->qlv < 4 && 
+		 ticks - myproc()->rst == myproc()->qlv * 2 + 2)
+		yield();
   }
 
   // Check if the process has been killed since we yielded
