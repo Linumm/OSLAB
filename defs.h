@@ -125,6 +125,10 @@ void			qinsert(int, struct proc*);
 void			qdemote(void);
 int				qfindnext(void);
 void			priorityboost(void);
+int				psetpriority(int, int);
+int				psetmonopoly(int, int);
+void			pmonopolize(void);
+void			punmonopolize(void);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

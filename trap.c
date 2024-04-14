@@ -16,6 +16,8 @@ uint ticks;
 //--P2--
 uint gticks; 		    // global ticks for 'priority boosting'
 
+extern void priorityboost(void);
+
 void
 tvinit(void)
 {
