@@ -1,4 +1,4 @@
-#includ "types.h"
+#include "types.h"
 #include "defs.h"
 #include "param.h"
 #include "memlayout.h"
@@ -17,7 +17,7 @@ struct {
   int recentidx[4];				// recent choosen process's index in each lv queue
   
   int nextmoqid;				// next moq id to assign
-  int recentmoqid;				// recent choosen moq process's id;
+  int targetmoqid;				// target moq process id to choose
   int moqsize;					// to check if moq is empty
 } ptable;
 
@@ -99,12 +99,11 @@ found:
   p->state = EMBRYO;
   p->pid = nextpid++;
   //--P2--
-  p->rst = 0; // rst 0 means it's initialized (or re-initialized)
+  p->rst = -1; // rst 0 means it's initialized (or re-initialized)
   p->priority = 0;
-  p->moqid = -1;
-  // EMBRYO process enqueue into L0 
   p->qlv = 0;
-  qinsert(0, p);
+  p->qidx = -1;
+  p->moqid = -1;
 
   release(&ptable.lock);
 
@@ -140,6 +139,18 @@ userinit(void)
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
+  //--P2--
+  // ptable initialization
+  acquire(&ptable.lock);
+  for(int i = 0; i < 4; i++)
+	ptable.recentidx[i] = 0;
+  ptable.toplv = 0;
+  ptable.ismlfq = 1;
+  ptable.nextmoqid = 1;
+  ptable.targetmoqid = 1;
+  ptable.moqsize = 0;
+  release(&ptable.lock);
+
   p = allocproc();
   
   initproc = p;
@@ -166,17 +177,9 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
-  // Need to initialize some member values of ptable in "init"
-  for(int i = 0; i < 4; i++)
-	ptable.recentidx[i] = 0;
-  ptable.toplv = 0;
-  ptable.ismlfq = 1;
-  ptable.nextmoqid = 1;
-  ptable.recentmoqid = 0;
-  ptable.moqsize = 0;
+  qinsert(0, p);
 
   release(&ptable.lock);
-  cprintf("userinit()\n");
 }
 
 // Grow current process's memory by n bytes.
@@ -241,6 +244,8 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  //--P2--
+  qinsert(0, np);
 
   release(&ptable.lock);
 
@@ -274,12 +279,7 @@ exit(void)
   curproc->cwd = 0;
 
   acquire(&ptable.lock);
-  //--P2--
-  // curproc is now exit, so modify mlfq/moq values
-  if(curproc->moqid == -1)
-	qdelete(curproc->qlv, curproc);
-  else
-	ptable.moqsize--;
+
   // Parent might be sleeping in wait().
   wakeup1(curproc->parent);
 
@@ -294,6 +294,7 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
+  qdelete(curproc);
   sched();
   panic("zombie exit");
 }
@@ -316,6 +317,13 @@ wait(void)
         continue;
       havekids = 1;
       if(p->state == ZOMBIE){
+		//--P2--
+		/*
+		if(p->moqid == -1)
+		  qdelete(p->qlv, p);
+		else
+		  ptable.moqsize--;
+		*/
         // Found one.
         pid = p->pid;
         kfree(p->kstack);
@@ -353,9 +361,9 @@ wait(void)
 void
 scheduler(void)
 {
-  struct proc *p;
+  struct proc *p = 0;
   struct cpu *c = mycpu();
-  int targetidx;
+  int targetidx = 0;
   c->proc = 0;
   
   for(;;){
@@ -365,9 +373,7 @@ scheduler(void)
     acquire(&ptable.lock);
 	// from this moment, not interruptable on this cpu.
 	if(ptable.ismlfq){ 	// MLFQ mode
-	  //cprintf("now in mlfq mode\n");
 	  targetidx = qfindnext();
-	  //cprintf("qfindnext() passed\n");
 	  if(targetidx == -1){
 		release(&ptable.lock);
 		continue;
@@ -377,7 +383,7 @@ scheduler(void)
 	else{ 				// MOQ mode
 	  if(ptable.moqsize > 0){
 	    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-		  if(p->state == RUNNABLE && p->moqid == (++ptable.recentmoqid))
+		  if(p->moqid == ptable.targetmoqid)
 		    break;
 	  }
 	  else{
@@ -386,13 +392,11 @@ scheduler(void)
 		continue;
 	  }
 	}
-
 	c->proc = p;
 	switchuvm(p);
 	// Change the process state and record the running start time
 	p->state = RUNNING;
 	p->rst = sys_uptime();
-	cprintf("scheduled proc name: %s\n", p->name);
 	// after switch, process will release the lock.
 	// and it will acquire lock again at the yield moment.
 	swtch(&(c->scheduler), p->context);
@@ -400,6 +404,7 @@ scheduler(void)
 	// Process is done running for now.
 	// It should have changed its p->state before coming back.
 	c->proc = 0;
+
 	release(&ptable.lock);
   }
 }
@@ -488,6 +493,7 @@ sleep(void *chan, struct spinlock *lk)
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
+  qdelete(p);
 
   sched();
 
@@ -510,8 +516,10 @@ wakeup1(void *chan)
   struct proc *p;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+    if(p->state == SLEEPING && p->chan == chan){
       p->state = RUNNABLE;
+	  qinsert(0, p);
+	}
 }
 
 // Wake up all processes sleeping on chan.
@@ -587,15 +595,26 @@ procdump(void)
 //--P2--
 // mlfq control functions
 
-// Delete the process from target queue level
+// Delete the process from target queue level(including MoQ)
 void
-qdelete(int qlv, struct proc* p)
+qdelete(struct proc* p)
 {
-  ptable.mlfq[qlv][p->qidx] = 0;
-  cprintf("proc dequeued, name: %s, lv: %d\n", p->name, p->qlv); 
+  // ptable.lock is already acquired in qdemote()
+  if(p->qlv == 99){
+	// In MoQ, if the process deleted,
+	// target should be next moqid by FCFS
+	ptable.moqsize--;
+	ptable.targetmoqid++;
+  }
+  else{
+    ptable.mlfq[p->qlv][p->qidx] = 0;
+	p->qlv = -1;
+  }
+  //cprintf("proc dequeued, name: %s, lv: %d\n", p->name, p->qlv); 
 }
 
-// Insert the process to the target queue level
+// Insert the process to the target queue level (only mlfq)
+// then modify the mlfq top level
 void
 qinsert(int qlv, struct proc* p)
 {
@@ -606,7 +625,10 @@ qinsert(int qlv, struct proc* p)
 	  ptable.mlfq[qlv][i] = p;
 	  p->qlv = qlv;
 	  p->qidx = i;
-	  cprintf("proc enqueued, name: %s, lv: %d, idx: %d\n", p->name, p->qlv, p->qidx);
+	  
+	  // if qlv is higher queue, update ptable.toplv
+	  if(qlv < ptable.toplv)
+		ptable.toplv = qlv;
 	  return;
 	}
   }
@@ -619,21 +641,20 @@ qinsert(int qlv, struct proc* p)
 void
 qdemote(void)
 {
-  cprintf("qdemote enter\n");
   struct proc *p = myproc();
-
+  //cprintf("demoted name: %s, current lv: %d\n", p->name, p->qlv);
   p->rst = 0;
 
   switch(p->qlv){
 	case 0:
-	  qdelete(0, p);
+	  qdelete(p);
 	  if(p->pid % 2 == 1)	// odd->L1
 		qinsert(1, p);
 	  else					// even->L2
 	    qinsert(2, p);
 	  break;
 	case 1: case 2:
-	  qdelete(p->qlv, p);
+	  qdelete(p);
 	  qinsert(3, p);
 	  break;
 	case 3:
@@ -643,7 +664,6 @@ qdemote(void)
 	default:
 	  break;
   }
-  cprintf("qdemote end\n");
 }
 
 // Find the next process target in the mlfq.
@@ -663,7 +683,7 @@ qfindnext(void)
 	for(i = ptable.recentidx[ptable.toplv]+1; i < NPROC; i++){
 	  //cprintf("mlfq idx i: %d\n", i);
 	  p = ptable.mlfq[ptable.toplv][i];
-	  if(p != 0 && p->state == RUNNABLE && p->moqid == -1){
+	  if(p != 0 && p->state == RUNNABLE){
 		ptable.recentidx[ptable.toplv] = i;
 		return i;
 	  }
@@ -671,14 +691,14 @@ qfindnext(void)
 	// search the remain part of current lv queue
 	for(i = 0; i <= ptable.recentidx[ptable.toplv]; i++){ // should I also check recentidx procs
 	  p = ptable.mlfq[ptable.toplv][i];
-	  if(p != 0 && p->state == RUNNABLE && p->moqid == -1){
+	  if(p != 0 && p->state == RUNNABLE){
 		ptable.recentidx[ptable.toplv] = i;
 		return i;
 	  }
 	}
 	// now none procs RUNNABLE in current lv queue, go down
 	ptable.toplv++;
-	cprintf("current toplv: %d\n", ptable.toplv);
+	//cprintf("current toplv: %d\n", ptable.toplv);
   }
   
   // Now in L3 queue
@@ -688,7 +708,7 @@ qfindnext(void)
   for(i = ptable.recentidx[3]+1; i < NPROC; i++){
 	p = ptable.mlfq[3][i];
 	if(p != 0 && p->state == RUNNABLE && 
-	   p->moqid == -1 && p->priority > maxp){
+	   p->priority > maxp){
 	  maxp = p->priority;
 	  maxi = i;
 	}
@@ -734,9 +754,9 @@ priorityboost(void)
   for(int i = 1; i < 4; i++){
 	for(idx = 0; idx < NPROC; idx++){
 	  p = ptable.mlfq[i][idx];
-	  if(p != 0 && p->moqid == -1){ // except process currently in moq
+	  if(p != 0){ // except process currently in moq
 		p->rst = 0;
-		qdelete(i, p);
+		qdelete(p);
 		qinsert(0, p);
 	  }
 	}
@@ -772,7 +792,10 @@ psetmonopoly(int pid, int pw)
   if(pw != studentID) return -2;
   acquire(&ptable.lock);
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-	if(p != 0 && p->pid == pid && p->moqid == -1){
+	if(p != 0 && p->pid == pid && p->qlv != 99){
+	  // if found, delete proc from mlfq then put into moq
+	  qdelete(p);
+	  p->qlv = 99;
 	  p->moqid = ptable.nextmoqid;
 	  ptable.nextmoqid++;
 	  ptable.moqsize++;

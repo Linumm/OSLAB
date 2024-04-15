@@ -120,7 +120,7 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
-void			qdelete(int, struct proc*);
+void			qdelete(struct proc*);
 void			qinsert(int, struct proc*);
 void			qdemote(void);
 int				qfindnext(void);

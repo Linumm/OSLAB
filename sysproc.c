@@ -105,8 +105,7 @@ sys_yield(void)
 int
 sys_getlev(void)
 {
-  if(myproc()->moqid != -1) return 99;
-  else return myproc()->qlv;
+  return myproc()->qlv;
 }
 int
 sys_setpriority(void)

@@ -62,7 +62,7 @@ trap(struct trapframe *tf)
 	  // Priority boost case
 	  if(gticks == 100){
 		gticks = 0;
-		//priorityboost();
+		priorityboost();
 	  }
       release(&tickslock);
     }
@@ -119,11 +119,11 @@ trap(struct trapframe *tf)
 	  //--P2--
 	  // MOQ : skip. just waiting until the proc exit.
 	  // MLFQ : time quantum check
-	  /*if(myproc()->moqid == -1 && myproc()->qlv < 4 && 
+	  if(myproc()->moqid == -1 && myproc()->qlv < 4 && 
 		 ticks - myproc()->rst == myproc()->qlv * 2 + 2){
 		yield();
-	  }*/
-	  yield();
+	  }
+	  
   }
 
   // Check if the process has been killed since we yielded
