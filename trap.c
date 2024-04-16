@@ -119,11 +119,10 @@ trap(struct trapframe *tf)
 	  //--P2--
 	  // MOQ : skip. just waiting until the proc exit.
 	  // MLFQ : time quantum check
-	  if(myproc()->moqid == -1 && myproc()->qlv < 4 && 
+	  if(myproc()->qlv != 99 &&
 		 ticks - myproc()->rst == myproc()->qlv * 2 + 2){
 		yield();
 	  }
-	  
   }
 
   // Check if the process has been killed since we yielded
