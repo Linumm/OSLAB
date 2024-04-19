@@ -289,8 +289,7 @@ tar:
 
 .PHONY: dist-test dist
 
-# Surya's user-macro-------------------------------------------------------------
-# aso(all step by once) -> re-make and boot xv6.sh directly
+# my macro
 aso:
 	make clean
 	make

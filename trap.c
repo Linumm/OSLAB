@@ -13,10 +13,9 @@ struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
-//--P2--
-uint gticks; 		    // global ticks for 'priority boosting'
+uint gticks;
 
-extern void priorityboost(void);
+extern void priorityboost();
 
 void
 tvinit(void)
@@ -26,7 +25,6 @@ tvinit(void)
   for(i = 0; i < 256; i++)
     SETGATE(idt[i], 0, SEG_KCODE<<3, vectors[i], 0);
   SETGATE(idt[T_SYSCALL], 1, SEG_KCODE<<3, vectors[T_SYSCALL], DPL_USER);
-  SETGATE(idt[128], 0, SEG_KCODE<<3, vectors[128], DPL_USER);
 
   initlock(&tickslock, "time");
 }
@@ -52,14 +50,13 @@ trap(struct trapframe *tf)
   }
 
   switch(tf->trapno){
-  case T_IRQ0 + IRQ_TIMER: // when timer interrupt happen, ticks++ and break from switch
+  case T_IRQ0 + IRQ_TIMER:
     if(cpuid() == 0){
-      acquire(&tickslock); // mutual exclusively change 'ticks'
-      ticks++; // +1 every about 10ms
-	  gticks++; //  p2
+      acquire(&tickslock);
+      ticks++;
+	  gticks++;
       wakeup(&ticks);
-	  
-	  // Priority boost case
+	  // priority boost
 	  if(gticks == 100){
 		gticks = 0;
 		priorityboost();
@@ -90,6 +87,12 @@ trap(struct trapframe *tf)
     lapiceoi();
     break;
 
+	// lab04 - int 128 : print interrupt happened
+  case T_IRQ0 + 96:
+	cprintf("user interrupt 128 called!\n");
+	lapiceoi();
+	break;
+
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){
@@ -115,15 +118,9 @@ trap(struct trapframe *tf)
   // Force process to give up CPU on clock tick.
   // If interrupts were on while locks held, would need to check nlock.
   if(myproc() && myproc()->state == RUNNING &&
-     tf->trapno == T_IRQ0+IRQ_TIMER) {
-	  //--P2--
-	  // MOQ : skip. just waiting until the proc exit.
-	  // MLFQ : time quantum check
-	  if(myproc()->qlv != 99 &&
-		 ticks - myproc()->rst == myproc()->qlv * 2 + 2){
-		yield();
-	  }
-  }
+     tf->trapno == T_IRQ0+IRQ_TIMER)
+    if(myproc()->qlv != 99 && ticks - myproc()->rst == 2*myproc()->qlv + 2)
+	  yield();
 
   // Check if the process has been killed since we yielded
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)

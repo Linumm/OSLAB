@@ -10,15 +10,12 @@
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
-  //--P2--
-  struct proc* mlfq[4][NPROC];	// mlfq multi-level array (0 is the highest)
-  int toplv;					// mlfq current top level prior queue in flow
-  int ismlfq;					// queue mode indicator, mlfq: 1, moq: 0
-  int recentidx[4];				// recent choosen process's index in each lv queue
   
-  int nextmoqid;				// next moq id to assign
-  int targetmoqid;				// target moq process id to choose
-  int moqsize;					// to check if moq is empty
+  int ismlfq;				// queue mod
+  int recentidx[4];			// recent choosen process's index of each level
+
+  int nextmoqid;			// next moq id to assign to proc
+  int moqsize;				// current MoQ size
 } ptable;
 
 static struct proc *initproc;
@@ -26,8 +23,8 @@ static struct proc *initproc;
 int nextpid = 1;
 extern void forkret(void);
 extern void trapret(void);
-extern int sys_uptime(void);	// to get process's cpu-on time(tick)
-extern int sys_unmonopolize(void);
+extern int sys_uptime(void);
+
 static void wakeup1(void *chan);
 
 void
@@ -89,8 +86,8 @@ allocproc(void)
   acquire(&ptable.lock);
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-	if(p->state == UNUSED)
-	  goto found;
+    if(p->state == UNUSED)
+      goto found;
 
   release(&ptable.lock);
   return 0;
@@ -98,11 +95,10 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
-  //--P2--
-  p->rst = -1; // rst 0 means it's initialized (or re-initialized)
+  
+  p->rst = -1;
   p->priority = 0;
-  p->qlv = -1;
-  p->qidx = -1;
+  p->qlv = 0;
   p->moqid = -1;
 
   release(&ptable.lock);
@@ -139,15 +135,12 @@ userinit(void)
   struct proc *p;
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
-  //--P2--
   // ptable initialization
   acquire(&ptable.lock);
   for(int i = 0; i < 4; i++)
 	ptable.recentidx[i] = 0;
-  ptable.toplv = 0;
   ptable.ismlfq = 1;
   ptable.nextmoqid = 1;
-  ptable.targetmoqid = 1;
   ptable.moqsize = 0;
   release(&ptable.lock);
 
@@ -177,7 +170,6 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
-  qinsert(0, p);
 
   release(&ptable.lock);
 }
@@ -244,8 +236,6 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
-  //--P2--
-  qinsert(0, np);
 
   release(&ptable.lock);
 
@@ -294,8 +284,13 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
-  qdelete(curproc);
-  cprintf("proc %d exit\n", curproc->pid);
+
+  // assign qlv -1, never to detected in scheduler
+  curproc->qlv = -1;
+
+  // moqsize modify
+  if(curproc->qlv == 99)
+	ptable.moqsize--;
   sched();
   panic("zombie exit");
 }
@@ -318,13 +313,6 @@ wait(void)
         continue;
       havekids = 1;
       if(p->state == ZOMBIE){
-		//--P2--
-		/*
-		if(p->moqid == -1)
-		  qdelete(p->qlv, p);
-		else
-		  ptable.moqsize--;
-		*/
         // Found one.
         pid = p->pid;
         kfree(p->kstack);
@@ -362,7 +350,7 @@ wait(void)
 void
 scheduler(void)
 {
-  struct proc *p = 0;
+  struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
   
@@ -370,43 +358,38 @@ scheduler(void)
     // Enable interrupts on this processor.
     sti();
 
+    // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-	// from this moment, not interruptable on this cpu.
-	if(ptable.ismlfq){ 	// MLFQ mode
-	  p = qfindnext();
-	  if(p == 0){
-		release(&ptable.lock);
-		continue;
-	  }
-	}
-	else{ 				// MOQ mode
-	  if(checkmoq()){
-	    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-		  if(p->state == RUNNABLE && p->moqid == ptable.targetmoqid){
-			cprintf("MOQ Run, moqid: %d pid: %d\n", p->moqid, p->pid);
-		    break;
-		  }
-	  }
-	  else{
-		release(&ptable.lock);
-		sys_unmonopolize();
-		continue;
-	  }
-	}
-	c->proc = p;
-	switchuvm(p);
-	// Change the process state and record the running start time
-	p->state = RUNNING;
-	p->rst = sys_uptime();
-	// after switch, process will release the lock.
-	// and it will acquire lock again at the yield moment.
-	swtch(&(c->scheduler), p->context);
-	switchkvm();
-	// Process is done running for now.
-	// It should have changed its p->state before coming back.
-	c->proc = 0;
 
-	release(&ptable.lock);
+    if(ptable.ismlfq)
+	  p = mlfqnext();
+	else{
+	  p = moqnext();
+	  // check for auto unmonopolize
+	  if(p == 0 && moqempty()){
+		release(&ptable.lock);
+		punmonopolize();
+		continue;
+	  }
+	}
+
+      // Switch to chosen process.  It is the process's job
+      // to release ptable.lock and then reacquire it
+      // before jumping back to us.
+	if(p != 0){
+      c->proc = p;
+      switchuvm(p);
+      p->state = RUNNING;
+	  p->rst = sys_uptime();
+      swtch(&(c->scheduler), p->context);
+      switchkvm();
+
+      // Process is done running for now.
+      // It should have changed its p->state before coming back.
+      c->proc = 0;
+    }
+    release(&ptable.lock);
+
   }
 }
 
@@ -442,7 +425,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
-  qdemote();
+  mlfqdemote();
   sched();
   release(&ptable.lock);
 }
@@ -494,10 +477,8 @@ sleep(void *chan, struct spinlock *lk)
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
-  if(p->qlv != 99){
-	qdelete(p);
-	sched();
-  }
+
+  sched();
 
   // Tidy up.
   p->chan = 0;
@@ -520,8 +501,9 @@ wakeup1(void *chan)
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == SLEEPING && p->chan == chan){
       p->state = RUNNABLE;
-	  if(p->qlv != 99) qinsert(0, p);
+	  if(p->qlv != 99) p->qlv = 0;
 	}
+  	  // directly inserted to origial location in each queue
 }
 
 // Wake up all processes sleeping on chan.
@@ -593,194 +575,132 @@ procdump(void)
   }
 }
 
+// -- P2 --
 
-//--P2--
-// mlfq control functions
-
-// Delete the process from target queue level(including MoQ)
-void
-qdelete(struct proc* p)
+// mlfqnext() : find next mlfq target process
+// ensured already ptable.lock acquired before entry
+struct proc*
+mlfqnext()
 {
-  // ptable.lock is already acquired in qdemote()
-  if(p->qlv == 99){
-	// In MoQ, if the process deleted,
-	// target should be next moqid by FCFS
-	cprintf("MOQ Del, moqid: %d\n", p->moqid);
-	p->moqid = -1;
-	p->qlv = -1;
-	ptable.moqsize--;
-	ptable.targetmoqid++;
-  }
-  else{
-    ptable.mlfq[p->qlv][p->qidx] = 0;
-	p->qidx = -1;
-	p->qlv = -1;
-  }
-  //cprintf("proc dequeued, name: %s, lv: %d\n", p->name, p->qlv); 
-}
-
-// Insert the process to the target queue level (only mlfq)
-// then modify the mlfq top level
-void
-qinsert(int qlv, struct proc* p)
-{
-  // ptable.lock is already acquired in qdemote()
-  for(int i = 0; i<NPROC; i++){
-	// find empty slot
-	if(ptable.mlfq[qlv][i] == 0){
-	  ptable.mlfq[qlv][i] = p;
-	  p->qlv = qlv;
-	  p->qidx = i;
-	  
-	  // if qlv is higher queue, update ptable.toplv
-	  if(qlv < ptable.toplv)
-		ptable.toplv = qlv;
-	  return;
+  struct proc* p;
+  int i, j;
+  
+  // L0~L2
+  // search starts from recentidx for Round-Robin
+  for(i = 0; i < 3; i++){
+	for(j = ptable.recentidx[i]+1; j < NPROC; j++){
+	  p = &ptable.proc[j];
+	  if(p->state == RUNNABLE && p->qlv == i){
+		ptable.recentidx[i] = j;
+		return p;
+	  }
+	}
+	// search the remain for one loop
+	for(j = 0; j < ptable.recentidx[i]+1; j++){
+	  p = &ptable.proc[j];
+	  if(p->state == RUNNABLE && p->qlv == i){
+		ptable.recentidx[i] = j;
+		return p;
+	  }
 	}
   }
-  panic("qinsert error: FULL QUEUE");
+  
+  // L3: max priority & Round-Robin
+  int maxp = -1;
+  int maxj = -1;
+  for(j = ptable.recentidx[3]+1; j < NPROC; j++){
+	p = &ptable.proc[j];
+	if(p->qlv == 3 && p->state == RUNNABLE &&
+	   p->priority > maxp){
+	  maxp = p->priority;
+	  maxj = j;
+	}
+  }
+  
+  // No RUNNABLE process in entire mlfq
+  if(maxj == -1) return 0;
+
+  return &ptable.proc[maxj];
 }
 
-// Demote the yielded process queue level
-// this is only called in yield()
-// so dont acquire/release ptable.lock
+// mlfqdemote(): demote the process in mlfq when yielded
+// ensured already ptable.lock acquired before entry
 void
-qdemote(void)
+mlfqdemote()
 {
+  // L0 -> L1, L2
+  // L1, L2 -> L3
   struct proc *p = myproc();
-  //cprintf("demoted name: %s, current lv: %d\n", p->name, p->qlv);
   p->rst = 0;
 
   switch(p->qlv){
 	case 0:
-	  qdelete(p);
-	  if(p->pid % 2 == 1)	// odd->L1
-		qinsert(1, p);
-	  else					// even->L2
-	    qinsert(2, p);
+	  if(p->pid % 2 == 1)
+		p->qlv = 1;
+	  else
+		p->qlv = 2;
 	  break;
 	case 1: case 2:
-	  qdelete(p);
-	  qinsert(3, p);
+	  p->qlv = 3;
 	  break;
 	case 3:
 	  if(p->priority > 0)
 		p->priority--;
 	  break;
-	default:
-	  break;
   }
 }
 
-// Find the next process target in the mlfq.
-// if none, go down. if upper has, go up.
-// one loop searching for RUNNABLE process. 
-// return: target process in toplv queue. (not found 0)
-struct proc*
-qfindnext(void)
-{
-  struct proc* p;
-  int i;
-  for(;;){
-	// if now in L3 queue, priority should be checked while in search.
-	if(ptable.toplv == 3)
-		break;
-	// search starts from recentidx
-	for(i = ptable.recentidx[ptable.toplv]+1; i < NPROC; i++){
-	  //cprintf("mlfq idx i: %d\n", i);
-	  p = ptable.mlfq[ptable.toplv][i];
-	  if(p != 0 && p->state == RUNNABLE){
-		ptable.recentidx[ptable.toplv] = i;
-		return p;
-	  }
-	}
-	// search the remain part of current lv queue
-	for(i = 0; i <= ptable.recentidx[ptable.toplv]; i++){ // should I also check recentidx procs
-	  p = ptable.mlfq[ptable.toplv][i];
-	  if(p != 0 && p->state == RUNNABLE){
-		ptable.recentidx[ptable.toplv] = i;
-		return p;
-	  }
-	}
-	// now none procs RUNNABLE in current lv queue, go down
-	ptable.toplv++;
-	//cprintf("current toplv: %d\n", ptable.toplv);
-  }
-  
-  // Now in L3 queue
-  // cprintf("current toplv: 3\n");
-  int maxp = -1;
-  int maxi = -1;
-  for(i = ptable.recentidx[3]+1; i < NPROC; i++){
-	p = ptable.mlfq[3][i];
-	if(p != 0 && p->state == RUNNABLE && 
-	   p->priority > maxp){
-	  maxp = p->priority;
-	  maxi = i;
-	}
-  }
-  // search the remain part
-  for(i = 0; i <= ptable.recentidx[3]; i++){
-	p = ptable.mlfq[3][i];
-	if(p != 0 && p->state == RUNNABLE && 
-	   p->moqid == -1 && p->priority > maxp){
-	  maxp= p->priority;
-	  maxi = i;
-	}
-  }
-  // No RUNNABLE process to return
-  if(maxi == -1){
-	// Reset all recentidx so that accessing get faster after enqueue from 0
-	for(int j=0; j<4; j++)
-	  ptable.recentidx[j] = -1;
-	return 0;
-  }
-  
-  return ptable.mlfq[3][maxi];
-}
-
-// Priority-boost
-// called when gticks == 100 in trap.c(timer interrupt)
-// reset all process in mlfq rst -> 0 and enqueue them all in L0 queue
+// priorityboost(): called from trap.c when gticks == 100
+// reset all process in mlfq rst and enqueue to L0
+// need to acquire ptable.lock inside
 void
-priorityboost(void)
+priorityboost()
 {
   struct proc *p;
-  int idx;
   acquire(&ptable.lock);
-
-  // reset process rst in L0
-  for(idx = 0; idx < NPROC; idx++){
-	p = ptable.mlfq[0][idx];
-	if(p != 0) p->rst = 0;
-  }
-  // reset rst and  move every process in L1,2,3 into L0
-  for(int i = 1; i < 4; i++){
-	for(idx = 0; idx < NPROC; idx++){
-	  p = ptable.mlfq[i][idx];
-	  if(p != 0){ // except process currently in moq
-		p->rst = 0;
-		qdelete(p);
-		qinsert(0, p);
-	  }
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+	if(p->state == RUNNABLE && p->qlv != 99){
+	  p->qlv = 0;
+	  p->rst = 0;
 	}
   }
   release(&ptable.lock);
 }
 
-// check any moq process remain in ptable.proc
-int
-checkmoq()
+// moqnext(): return next target moq proc
+// ensured already ptable.lock acquired before entry
+struct proc*
+moqnext()
 {
-  struct proc * p;
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-	if(p->qlv == 99)
-	  return 1;
+  struct proc* p;
+  int minmoqid = 2147483647; // tmax
+  int minidx = -1;
+  for(int i = 0; i < NPROC; i++){
+	p = &ptable.proc[i];
+	if(p->state == RUNNABLE && p->qlv == 99 &&
+	   p->moqid < minmoqid){
+	  minmoqid = p->moqid;
+	  minidx = i;
+	}
   }
-  return 0;
+  // target not found
+  if(minidx == -1) return 0;
+
+  return &ptable.proc[minidx];
 }
 
-// For sysproc.c
+// moqempty(): if moq is totally empty(not even SLEEPING) return 1
+// ensured already ptable.lock acquired before entry
+int
+moqempty()
+{
+  struct proc* p;
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+	if(p->qlv == 99) return 0;
+  return 1;
+}
+
+
 int
 psetpriority(int pid, int pr)
 {
@@ -796,8 +716,9 @@ psetpriority(int pid, int pr)
 	  return 0;
 	}
   }
+  // target pid proc not found
   release(&ptable.lock);
-  return -1;
+  return -1; 
 }
 
 int
@@ -810,9 +731,7 @@ psetmonopoly(int pid, int pw)
   acquire(&ptable.lock);
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
 	if(p != 0 && p->pid == pid && p->qlv != 99){
-	  // if found, delete proc from mlfq then put into moq
-	  if(p->qidx != -1)
-		qdelete(p);
+	  // if found, move it into moq from mlfq
 	  p->qlv = 99;
 	  p->moqid = ptable.nextmoqid;
 	  ptable.nextmoqid++;
@@ -823,13 +742,13 @@ psetmonopoly(int pid, int pw)
 	  return moqsize;
 	}
   }
-  // pid process not found or already in moq
+  // pid proc not found or already in moq
   release(&ptable.lock);
   return -1;
 }
 
 void
-pmonopolize(void)
+pmonopolize()
 {
   acquire(&ptable.lock);
   ptable.ismlfq = 0;
@@ -838,9 +757,12 @@ pmonopolize(void)
 }
 
 void
-punmonopolize(void)
+punmonopolize()
 {
   acquire(&ptable.lock);
   ptable.ismlfq = 1;
   release(&ptable.lock);
+  // if called from user, yield user proc
+  if(myproc() != 0)
+	yield();
 }

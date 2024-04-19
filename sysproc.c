@@ -94,8 +94,9 @@ sys_uptime(void)
 int
 sys_getgpid(void)
 {
-  return myproc()->parent->parent->pid;
+	return myproc()->parent->parent->pid;
 }
+
 int
 sys_yield(void)
 {

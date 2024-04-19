@@ -49,12 +49,12 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-  //--P2--
-  uint rst;					   // Running start ticks record
-  int priority;				   // Priority in L3Queue
-  int qlv;					   // What level of queue currently in mlfq
-  int qidx;					   // index in current queue level
-  int moqid;				   // moq order id, if -1(initial): not in moq 
+
+  // -- P2 --
+  int rst;					   // running start tick
+  int priority;				   // priority in L3
+  int qlv;					   // current located queue lv
+  int moqid;				   // set monopoly assigned id
 };
 
 // Process memory is laid out contiguously, low addresses first:
