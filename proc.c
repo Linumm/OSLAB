@@ -13,6 +13,7 @@ struct {
 } ptable;
 
 static struct proc *initproc;
+typedef int thread_t;
 
 int nextpid = 1;
 int nexttid = 1;
@@ -94,12 +95,13 @@ found:
 
   // Thread pool init
   for(int i = 0; i < NTHREAD; i++)
-	p->threads[i] = 0;
+	p->threads[i].state = UNUSED;
 
   // Default-thread init
   t = &p->threads[0];
   t->state = EMBRYO;
   t->tid = nexttid++;
+  t->ret = 0;
 
   release(&ptable.lock);
 
@@ -201,7 +203,7 @@ fork(void)
   struct proc *np;
   struct thread *ndt; // np's Default-thread
   struct proc *curproc = myproc();
-  struct thread *curt = &curproc->threads[curproc->curtid];
+  struct thread *curt = &curproc->threads[curproc->curtidx];
 
   // Allocate process.
   if((np = allocproc()) == 0){
@@ -212,12 +214,15 @@ fork(void)
 
   // Copy process state from proc. (from current thread)
   if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
-    kfree(nt->kstack);
+    kfree(ndt->kstack);
     ndt->kstack = 0;
     np->state = UNUSED;
 	ndt->state = UNUSED;
     return -1;
   }
+  // Only need the current thread's user stack in adress space
+  // to-do T.T
+  //
   np->sz = curproc->sz;
   np->parent = curproc;
   *ndt->tf = *curt->tf;
@@ -320,8 +325,7 @@ wait(void)
 			kfree(t->kstack);
 			t->kstack = 0;
 			t->tid = 0;
-			t->parent = 0;
-			t->killed = 0;
+			t->ret = 0;
 			t->state = UNUSED;
 		}
         freevm(p->pgdir); // t->ustack are also freed
@@ -378,12 +382,17 @@ scheduler(void)
       c->proc = p;
 
 	  // Need to choose thread.
-	  p->curtidx = tscheduler(p);
+	  int next = tscheduler(p);
+	  if(next == -1)
+		continue;
 
+	  t = &p->threads[next];
+	  p->curtidx = next;
       switchuvm(p);
       p->state = RUNNING;
+	  t->state = RUNNING;
 
-      swtch(&(c->scheduler), p->context);
+      swtch(&(c->scheduler), t->context);
       switchkvm();
 
       // Process is done running for now.
@@ -511,8 +520,9 @@ wakeup1(void *chan)
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
 	for(t = p->threads; t < &p->threads[NTHREAD]; t++)
-      if(t->state == SLEEPING && t->chan == chan)
+      if(t->state == SLEEPING && t->chan == chan){
       	t->state = RUNNABLE;
+	  }
 	// check and change p->state
 	setpstate(p, RUNNABLE);
   }
@@ -542,7 +552,6 @@ kill(int pid)
       p->killed = 1;
 	  // kill every thread in p, too
 	  for(t = p->threads; t < &p->threads[NTHREAD]; t++){
-		t->killed = 1;
 		if(t->state == SLEEPING)
 		  t->state = RUNNABLE;
 	  }
@@ -602,25 +611,134 @@ procdump(void)
 
 // thread_create(): create new thread and start from start routine with arg
 int
-thread_create(struct thread *thread, void *(*start_routine)(void *), void *arg)
+thread_create(thread_t* thread, void *(*start_routine)(void *), void *arg)
 {
+  struct thread *nt;
+  struct proc *p = myproc();
+  char *sp;
+  acquire(&ptable.lock);
+  // find UNUSED slot
+  for(nt = p->threads; nt < &p->threads[NTHREAD]; nt++){
+	if(nt->state == UNUSED)
+	  goto found;
+  }
+  release(&ptable.lock);
+  return -1;
 
+found:
+  nt->state = EMBRYO;
+  nt->tid = nexttid++;
+
+  release(&ptable.lock);
+
+  // allocate kernel stack
+  if((nt->kstack = kalloc()) == 0){
+	nt->state = UNUSED;
+	return -1;
+  }
+  sp = nt->kstack + KSTACKSIZE;
+
+  // leave room for trap frame
+  sp -= sizeof *nt->tf;
+  nt->tf = (struct trapframe*)sp;
+
+  // set up new context
+  sp -= 4;
+  *(uint*)sp = (uint)trapret;
+  
+  sp -= sizeof *nt->context;
+  nt->context = (struct context*)sp;
+  memset(nt->context, 0, sizeof *nt->context);
+  nt->context->eip = (uint)forkret;
+
+  // allocate user stack with a guard-page
+  uint argc, usp;
+  uint ustack[3+MAXARG+1];
+  uint sz = PGROUNDUP(p->sz);
+  if((sz = allocuvm(p->pgdir, sz, sz + 2*PGSIZE)) == 0){
+	cprintf("thread_create() fail\n");
+	return -1;
+  }
+  clearpteu(p->pgdir, (char*)(sz - 2*PGSIZE));
+  usp = sz;
+
+  // push argument strings, prepare rest of stack in user stack
+  argc = 1;
+  usp = (usp - (strlen(arg) + 1)) & ~3;
+  if(copyout(p->pgdir, usp, arg, strlen(arg) + 1) < 0){
+	cprintf("thread_create() fail: arg copy fail\n");
+	return -1;
+  }
+  ustack[3] = usp;
+  ustack[3+argc] = 0;
+  ustack[0] = 0xFFFFFFFF;	// fake return PC
+  ustack[1] = 1;
+  ustack[2] = usp - (argc+1)*4; // arg pointer
+
+  usp -= (3+argc+1) * 4;
+  if(copyout(p->pgdir, usp, ustack, (3+argc+1)*4) < 0){
+	cprintf("thread_create() fail: ustack->vm copy fail\n");
+	return -1;
+  }
+
+  // setting routine
+  p->sz = sz;
+  nt->ustackp = sz;
+  nt->tf->eip = (uint)start_routine;	// start_routine
+  nt->tf->esp = usp;
+
+  // save tid to thread_t*
+  *thread = nt->tid;
+
+  return 0;
 }
 
 // thread_exit(): terminate thread then return "return value" from routine
-// every thread should be terminated with this function
+// every thread should only exit with this function
 void
 thread_exit(void *retval)
 {
+  struct proc *p = myproc();
+  acquire(&ptable.lock);
+  struct thread *t = &p->threads[p->curtidx];
 
+  // do not clear resources, only change state: ZOMBIE
+  t->state = ZOMBIE;
+  t->ret = retval;
+  // if any other proc or thread sleep, wakeup
+  wakeup1((void*)t->tid);
+  // then sched()
+  sched();
 }
 
 // thread_join(): wait for thread with tid, get return value from thread
 // by thread_exit()
 int
-thread_join(int tid, void **retval)
+thread_join(thread_t tid, void **retval)
 {
+  // first find proc & thread
+  struct proc *p;
+  struct thread *t;
 
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+	for(t = p->threads; t < &p->threads[NTHREAD]; t++)
+	  if(t->tid == tid)
+		goto found;
+
+  release(&ptable.lock);
+  cprintf("thread_join() failed: tid not found\n");
+  return -1;
+
+found:
+  // wait until target thread exit
+  while(t->state != ZOMBIE)
+	sleep((void*)t->tid, &ptable.lock);
+  // now target thread exit
+  *retval = t->ret;
+  // Do not change any info, since reaping is only done in wait()
+  release(&ptable.lock);
+  return 0;
 }
 
 
@@ -630,7 +748,7 @@ thread_join(int tid, void **retval)
 int
 tscheduler(struct proc* p)
 {
-  int next = p->curtidx;
+  int next = -1;
   int i;
   for(i = next + 1; i < NTHREAD; i++){
 	if(p->threads[i].state == RUNNABLE){

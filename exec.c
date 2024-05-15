@@ -18,6 +18,39 @@ exec(char *path, char **argv)
   struct proghdr ph;
   pde_t *pgdir, *oldpgdir;
   struct proc *curproc = myproc();
+  struct thread *t;
+  struct thread *dt;
+  int tidcopy = -1;
+  enum procstate statecopy = UNUSED;
+
+  // Clear every other thread first and copy current thread tid
+  // to assign it to default-thread
+  for(t = curproc->threads; t < &curproc->threads[NTHREAD]; t++){
+	if(t == &curproc->threads[curproc->curtidx]){
+	  tidcopy = t->tid;
+	  statecopy = t->state;
+	}
+	// user stacks will be cleared with freevm(pgdir)
+	t->ustackp = -1;
+	kfree(t->kstack);
+	t->kstack = 0;
+	t->tf = 0;
+	t->context = 0;
+	t->state = UNUSED;
+	t->chan = 0;
+  }
+  // dt: curproc's default-thread
+  dt = &curproc->threads[0];
+  dt->tid = tidcopy;
+  dt->state = statecopy;
+  // re-init default-thread
+  if((dt->kstack = kalloc()) == 0){
+	cprintf("exec: fail by kalloc fail\n");
+	return -1;
+  }
+  dt->chan = 0;
+  dt->ret = 0;
+
 
   begin_op();
 
@@ -97,8 +130,9 @@ exec(char *path, char **argv)
   oldpgdir = curproc->pgdir;
   curproc->pgdir = pgdir;
   curproc->sz = sz;
-  curproc->tf->eip = elf.entry;  // main
-  curproc->tf->esp = sp;
+  dt->ustackp = sz;
+  dt->tf->eip = elf.entry;  // main
+  dt->tf->esp = sp;
   switchuvm(curproc);
   freevm(oldpgdir);
   return 0;

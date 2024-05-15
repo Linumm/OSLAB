@@ -41,9 +41,9 @@ struct thread {
   char *kstack;					// Bottom of kernel stack for this thread
   struct trapframe *tf;			// Trap frame
   struct context *context;		// swtch() here to run each thread
-  uint ustack;					// Bottom address of user stack for this thread
+  uint ustackp;					// Pointer of thread user stack location(bottom)
   void *chan;					// If non-zero, sleeping on chan
-  int killed;					// If non-zero, have been killed
+  void *ret;					// To save thread_exit() retval for thread_join()
 };
 
 

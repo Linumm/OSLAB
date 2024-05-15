@@ -9,6 +9,8 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+enum procstate;
+typedef int thread_t;
 
 // bio.c
 void            binit(void);
@@ -120,9 +122,9 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
-int				thread_create(struct thread*, void(*)(void*), void*);
+int				thread_create(thread_t*, void*(*)(void*), void*);
 void			thread_exit(void*);
-int				thread_join(int, void**);
+int				thread_join(thread_t, void**);
 int				tscheduler(struct proc*);
 void			setpstate(struct proc*, enum procstate);
 
