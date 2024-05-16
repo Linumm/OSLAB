@@ -4,6 +4,7 @@ struct file;
 struct inode;
 struct pipe;
 struct proc;
+struct thread;
 struct rtcdate;
 struct spinlock;
 struct sleeplock;
@@ -127,6 +128,7 @@ void			thread_exit(void*);
 int				thread_join(thread_t, void**);
 int				tscheduler(struct proc*);
 void			setpstate(struct proc*, enum procstate);
+int				tclear(struct thread*);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

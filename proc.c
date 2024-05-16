@@ -94,14 +94,17 @@ found:
   p->curtidx = 0;
 
   // Thread pool init
-  for(int i = 0; i < NTHREAD; i++)
+  for(int i = 0; i < NTHREAD; i++){
 	p->threads[i].state = UNUSED;
+	p->threads[i].tid = 0;
+	p->threads[i].kstack = 0;
+	p->threads[i].ustackp = 0;
+  }
 
   // Default-thread init
   t = &p->threads[0];
   t->state = EMBRYO;
   t->tid = nexttid++;
-  t->ret = 0;
 
   release(&ptable.lock);
 
@@ -126,6 +129,8 @@ found:
   t->context = (struct context*)sp;
   memset(t->context, 0, sizeof *t->context);
   t->context->eip = (uint)forkret;
+
+  cprintf("Allocproc(): finished\n");
 
   return p;
 }
@@ -168,6 +173,8 @@ userinit(void)
 
   t->state = RUNNABLE;
   p->state = RUNNABLE;
+
+  cprintf("userinit(): finished\n");
 
   release(&ptable.lock);
 }
@@ -216,16 +223,17 @@ fork(void)
   if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
     kfree(ndt->kstack);
     ndt->kstack = 0;
+	ndt->ustackp = 0;
     np->state = UNUSED;
 	ndt->state = UNUSED;
     return -1;
   }
-  // Only need the current thread's user stack in adress space
-  // to-do T.T
-  //
   np->sz = curproc->sz;
   np->parent = curproc;
+  np->curtidx = 0;
   *ndt->tf = *curt->tf;
+
+  ndt->ustackp = curt->ustackp;
 
   // Clear %eax so that fork returns 0 in the child.
   ndt->tf->eax = 0;
@@ -291,9 +299,12 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   struct thread *t;
-  for(t = p->threads; t < &p->threads[NTHREAD]; t++)
-	t->state = ZOMBIE;
+  for(t = p->threads; t < &p->threads[NTHREAD]; t++){
+	if(t->state != UNUSED)
+	  t->state = ZOMBIE;
+  }
   curproc->state = ZOMBIE;
+  cprintf("exit(): p%d\n", curproc->pid);
   sched();
   panic("zombie exit");
 }
@@ -322,11 +333,8 @@ wait(void)
 		// clear Thread pool
 		for(int i = 0; i < NTHREAD; i++){
 			t = &p->threads[i];
-			kfree(t->kstack);
-			t->kstack = 0;
-			t->tid = 0;
-			t->ret = 0;
-			t->state = UNUSED;
+			if(tclear(t) == 0)
+			  panic("wait(): tclear error\n");
 		}
         freevm(p->pgdir); // t->ustack are also freed
         p->pid = 0;
@@ -334,7 +342,9 @@ wait(void)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
+		cprintf("wait(): %d before release\n", p->pid);
         release(&ptable.lock);
+		cprintf("d\n");
         return pid;
       }
     }
@@ -389,11 +399,13 @@ scheduler(void)
 	  t = &p->threads[next];
 	  p->curtidx = next;
       switchuvm(p);
-      p->state = RUNNING;
-	  t->state = RUNNING;
 
+      //p->state = RUNNING;
+	  t->state = RUNNING;
+	  cprintf("scheduled p:%d, t:%d\n", p->pid, t->tid);
       swtch(&(c->scheduler), t->context);
       switchkvm();
+	  cprintf("switchkvm() succeed\n");
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
@@ -422,8 +434,10 @@ sched(void)
     panic("sched ptable.lock");
   if(mycpu()->ncli != 1)
     panic("sched locks");
-  if(t->state == RUNNING)
+  if(p->state == RUNNING){
+	cprintf("p: %d, t: %d\n", p->pid, t->tid);
     panic("sched running");
+  }
   if(readeflags()&FL_IF)
     panic("sched interruptible");
   intena = mycpu()->intena;
@@ -438,6 +452,7 @@ yield(void)
   acquire(&ptable.lock);  //DOC: yieldlock
   struct thread *t = &myproc()->threads[myproc()->curtidx];
   t->state = RUNNABLE;
+  myproc()->state = RUNNABLE;
   sched();
   release(&ptable.lock);
 }
@@ -750,7 +765,7 @@ tscheduler(struct proc* p)
 {
   int next = -1;
   int i;
-  for(i = next + 1; i < NTHREAD; i++){
+  for(i= p->curtidx + 1; i < NTHREAD; i++){
 	if(p->threads[i].state == RUNNABLE){
 	  next = i;
 	  break;
@@ -758,10 +773,12 @@ tscheduler(struct proc* p)
   }
 
   // still not found
-  for(i = 0; i < next + 1; i++){
-	if(p->threads[i].state == RUNNABLE){
-	  next = i;
-	  break;
+  if(next == -1){
+	for(i = 0; i < p->curtidx + 1; i++){
+	  if(p->threads[i].state == RUNNABLE){
+		next = i;
+		break;
+	  }
 	}
   }
   
@@ -790,6 +807,8 @@ setpstate(struct proc *p, enum procstate check)
 	  panic("setpstate");
 	  break;
   }
+  // default check RUNNABLE
+  goto ISRUNNABLE;
 
 ISSLEEPING: // if every created threads sleep, change p states: SLEEPING
   for(t = p->threads; t < &p->threads[NTHREAD]; t++)
@@ -821,4 +840,29 @@ ISRUNNABLE: // if any threads are runnable, change p states: RUNNABLE
   if(flag)
 	p->state = RUNNABLE;
   return;
+}
+
+// tclear(): clear thread's info and allocated kstack (not ustack)
+// then make the slot: UNUSED
+// if succeed, return 1 else 0
+int
+tclear(struct thread *t)
+{
+  if(t->state == UNUSED)
+	return 1;
+  
+  if(t->kstack == 0){
+	cprintf("tclear(): kstack not found\n");
+	return 0;
+  }
+
+  kfree(t->kstack);
+  t->kstack = 0;
+  t->ustackp = 0;
+  t->tid = 0;
+  t->state = UNUSED;
+  t->chan = 0;
+  t->ret = 0;
+
+  return 1;
 }
