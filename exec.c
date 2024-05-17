@@ -24,8 +24,6 @@ exec(char *path, char **argv)
   // Clear every other thread first and copy current thread tid
   // to assign it to default-thread
   for(t = curproc->threads; t < &curproc->threads[NTHREAD]; t++){
-	if(t->state == UNUSED)
-	  continue;
 	if(t == curt)
 	  continue;
 
@@ -89,7 +87,6 @@ exec(char *path, char **argv)
   // Allocate two pages at the next page boundary.
   // Make the first inaccessible.  Use the second as the user stack.
   sz = PGROUNDUP(sz);
-  curproc->tdsz = sz;
   if((sz = allocuvm(pgdir, sz, sz + 2*PGSIZE)) == 0)
     goto bad;
   clearpteu(pgdir, (char*)(sz - 2*PGSIZE));
@@ -130,7 +127,6 @@ exec(char *path, char **argv)
 
   switchuvm(curproc);
   freevm(oldpgdir);
-  cprintf("exec(): finished\n");
   return 0;
 
  bad:

@@ -89,3 +89,40 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+int
+sys_thread_create(void)
+{
+  thread_t *t;
+  void*(*func)(void*);
+  void *arg;
+  if(argptr(0, (char**)&t, sizeof t) < 0)
+	return -1;
+  if(argptr(1, (char**)&func, sizeof func) < 0)
+	return -1;
+  if(argptr(2, (char**)&arg, sizeof arg) < 0)
+	return -1;
+  return thread_create(t, func, arg);
+}
+
+int
+sys_thread_exit(void)
+{
+  void* ret;
+  if(argptr(0, (char**)&ret, sizeof ret) < 0)
+	return -1;
+  thread_exit(ret);
+  return 1;
+}
+
+int
+sys_thread_join(void)
+{
+  thread_t tid;
+  void **ret;
+  if(argint(0, &tid) < 0)
+	return -1;
+  if(argptr(1, (char**)&ret, sizeof ret) < 0)
+	return -1;
+  return thread_join(tid, ret);
+}

@@ -50,7 +50,6 @@ struct thread {
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
-  uint tdsz;				   // Size of text, data mem segment
   pde_t* pgdir;                // Page table
   enum procstate state;        // Process state
   int pid;                     // Process ID

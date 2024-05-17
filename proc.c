@@ -130,8 +130,6 @@ found:
   memset(t->context, 0, sizeof *t->context);
   t->context->eip = (uint)forkret;
 
-  cprintf("Allocproc(): finished\n");
-
   return p;
 }
 
@@ -173,8 +171,6 @@ userinit(void)
 
   t->state = RUNNABLE;
   p->state = RUNNABLE;
-
-  cprintf("userinit(): finished\n");
 
   release(&ptable.lock);
 }
@@ -253,7 +249,6 @@ fork(void)
   ndt->state = RUNNABLE;
 
   release(&ptable.lock);
-
   return pid;
 }
 
@@ -299,12 +294,11 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   struct thread *t;
-  for(t = p->threads; t < &p->threads[NTHREAD]; t++){
+  for(t = curproc->threads; t < &curproc->threads[NTHREAD]; t++){
 	if(t->state != UNUSED)
 	  t->state = ZOMBIE;
   }
   curproc->state = ZOMBIE;
-  cprintf("exit(): p%d\n", curproc->pid);
   sched();
   panic("zombie exit");
 }
@@ -342,9 +336,7 @@ wait(void)
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
-		cprintf("wait(): %d before release\n", p->pid);
         release(&ptable.lock);
-		cprintf("d\n");
         return pid;
       }
     }
@@ -398,14 +390,14 @@ scheduler(void)
 
 	  t = &p->threads[next];
 	  p->curtidx = next;
+	  if(t->kstack == 0){
+		cprintf("NO kstack %d %d\n", p->pid, t->tid);
+	  }
       switchuvm(p);
 
-      //p->state = RUNNING;
 	  t->state = RUNNING;
-	  cprintf("scheduled p:%d, t:%d\n", p->pid, t->tid);
       swtch(&(c->scheduler), t->context);
       switchkvm();
-	  cprintf("switchkvm() succeed\n");
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
@@ -510,7 +502,6 @@ sleep(void *chan, struct spinlock *lk)
   t->state = SLEEPING;
 
   // if every thread: SLEEPING -> p:SLEEPING
-  setpstate(p, SLEEPING);
 
   sched();
 
@@ -539,7 +530,7 @@ wakeup1(void *chan)
       	t->state = RUNNABLE;
 	  }
 	// check and change p->state
-	setpstate(p, RUNNABLE);
+	// setpstate(p, RUNNABLE);
   }
 }
 
@@ -571,9 +562,6 @@ kill(int pid)
 		  t->state = RUNNABLE;
 	  }
 	  
-      // Wake process from sleep if necessary.
-      if(p->state == SLEEPING)
-        p->state = RUNNABLE;
       release(&ptable.lock);
       return 0;
     }
@@ -648,7 +636,9 @@ found:
 
   // allocate kernel stack
   if((nt->kstack = kalloc()) == 0){
+	nt->tid = 0;
 	nt->state = UNUSED;
+	release(&ptable.lock);
 	return -1;
   }
   sp = nt->kstack + KSTACKSIZE;
@@ -656,6 +646,7 @@ found:
   // leave room for trap frame
   sp -= sizeof *nt->tf;
   nt->tf = (struct trapframe*)sp;
+  *nt->tf = *p->threads[p->curtidx].tf;
 
   // set up new context
   sp -= 4;
@@ -667,44 +658,31 @@ found:
   nt->context->eip = (uint)forkret;
 
   // allocate user stack with a guard-page
-  uint argc, usp;
-  uint ustack[3+MAXARG+1];
   uint sz = PGROUNDUP(p->sz);
   if((sz = allocuvm(p->pgdir, sz, sz + 2*PGSIZE)) == 0){
 	cprintf("thread_create() fail\n");
+	tclear(nt);
+	release(&ptable.lock);
 	return -1;
   }
   clearpteu(p->pgdir, (char*)(sz - 2*PGSIZE));
-  usp = sz;
 
-  // push argument strings, prepare rest of stack in user stack
-  argc = 1;
-  usp = (usp - (strlen(arg) + 1)) & ~3;
-  if(copyout(p->pgdir, usp, arg, strlen(arg) + 1) < 0){
-	cprintf("thread_create() fail: arg copy fail\n");
-	return -1;
-  }
-  ustack[3] = usp;
-  ustack[3+argc] = 0;
-  ustack[0] = 0xFFFFFFFF;	// fake return PC
-  ustack[1] = 1;
-  ustack[2] = usp - (argc+1)*4; // arg pointer
-
-  usp -= (3+argc+1) * 4;
-  if(copyout(p->pgdir, usp, ustack, (3+argc+1)*4) < 0){
-	cprintf("thread_create() fail: ustack->vm copy fail\n");
-	return -1;
-  }
+  // push arg into user stack
+  sp = (char*) sz;
+  sp -= 4;
+  *(uint*)sp = (uint)arg;
+  sp -= 4;
+  *(uint*)sp = 0;
 
   // setting routine
   p->sz = sz;
   nt->ustackp = sz;
   nt->tf->eip = (uint)start_routine;	// start_routine
-  nt->tf->esp = usp;
+  nt->tf->esp = (uint)sp;
+  nt->state = RUNNABLE;
 
   // save tid to thread_t*
   *thread = nt->tid;
-
   return 0;
 }
 

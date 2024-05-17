@@ -1,5 +1,6 @@
 struct stat;
 struct rtcdate;
+typedef int thread_t;
 
 // system calls
 int fork(void);
@@ -23,6 +24,9 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int thread_create(thread_t*, void*(*)(void*), void*);
+int thread_exit(void*);
+int thread_join(thread_t, void**);
 
 // ulib.c
 int stat(const char*, struct stat*);
