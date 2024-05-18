@@ -22,7 +22,7 @@ void* thread_func(void* arg) {
     
     lock();
     
-        for(int i = 0; i < NUM_ITERS; i++)    shared_resource++;
+    for(int i = 0; i < NUM_ITERS; i++)    shared_resource++;
     
     unlock();
     

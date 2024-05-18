@@ -729,7 +729,8 @@ found:
 	sleep((void*)t->tid, &ptable.lock);
   // now target thread exit
   *retval = t->ret;
-  // Do not change any info, since reaping is only done in wait()
+  // clear thread
+  tclear(t);
   release(&ptable.lock);
   return 0;
 }

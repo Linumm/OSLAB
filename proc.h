@@ -38,7 +38,7 @@ enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 struct thread {
   enum procstate state;			// Thread state
   int tid;						// Thread ID
-  char *kstack;					// Bottom of kernel stack for this thread
+  char *kstack;					// Kernel stack address for this thread
   struct trapframe *tf;			// Trap frame
   struct context *context;		// swtch() here to run each thread
   uint ustackp;					// Pointer of thread user stack location(bottom)
@@ -60,8 +60,7 @@ struct proc {
   char name[16];               // Process name (debugging)
 
   struct thread threads[NTHREAD];	// Thread pool
-  int curtidx;						// current running tid & most recent tid
-  
+  int curtidx;						// current running tid
 };
 
 // Process memory is laid out contiguously, low addresses first:
