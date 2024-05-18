@@ -24,24 +24,12 @@ exec(char *path, char **argv)
   // Clear every other thread first and copy current thread tid
   // to assign it to default-thread
   for(t = curproc->threads; t < &curproc->threads[NTHREAD]; t++){
+	// clear every thread except current thread
 	if(t == curt)
 	  continue;
-
-	// clear every other threads
 	if(tclear(t) == 0)
 	  panic("exec(): tclear error\n");
   }
-  
-  // dt: curproc's default-thread
-  // copy current thread -> dt
-  /*
-  dt = &curproc->threads[0];
-  dt->tid = curt->tid;
-  dt->state = curt->state;
-  dt->kstack = curt->kstack;
-  dt->chan = curt->chan;
-  dt->ret = curt->ret;
-  */
 
   begin_op();
 
@@ -121,6 +109,7 @@ exec(char *path, char **argv)
   oldpgdir = curproc->pgdir;
   curproc->pgdir = pgdir;
   curproc->sz = sz;
+  // Reset current thread info
   curt->ustackp = sz;
   curt->tf->eip = elf.entry;  // main
   curt->tf->esp = sp;

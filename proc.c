@@ -91,7 +91,8 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
-  p->curtidx = 0;
+  p->curtidx = 0; // new process always start with 0th thread
+  // In initial proc state, Default-thread: 0th thread
 
   // Thread pool init
   for(int i = 0; i < NTHREAD; i++){
@@ -99,6 +100,8 @@ found:
 	p->threads[i].tid = 0;
 	p->threads[i].kstack = 0;
 	p->threads[i].ustackp = 0;
+	p->threads[i].chan = 0;
+	p->threads[i].ret = 0;
   }
 
   // Default-thread init
@@ -226,9 +229,10 @@ fork(void)
   }
   np->sz = curproc->sz;
   np->parent = curproc;
-  np->curtidx = 0;
-  *ndt->tf = *curt->tf;
 
+  // Copy trap frame from current proc thread's trap frame
+  *ndt->tf = *curt->tf;
+  // Copy user-stack adrs from current proc thread's trap frame
   ndt->ustackp = curt->ustackp;
 
   // Clear %eax so that fork returns 0 in the child.
@@ -245,6 +249,7 @@ fork(void)
 
   acquire(&ptable.lock);
 
+  // thread, proc -> RUNNABLE
   np->state = RUNNABLE;
   ndt->state = RUNNABLE;
 
@@ -293,6 +298,7 @@ exit(void)
   }
 
   // Jump into the scheduler, never to return.
+  // Change every thread's state : ZOMBIE
   struct thread *t;
   for(t = curproc->threads; t < &curproc->threads[NTHREAD]; t++){
 	if(t->state != UNUSED)
@@ -309,7 +315,6 @@ int
 wait(void)
 {
   struct proc *p;
-  struct thread *t;
   int havekids, pid;
   struct proc *curproc = myproc();
   
@@ -326,8 +331,7 @@ wait(void)
         pid = p->pid;
 		// clear Thread pool
 		for(int i = 0; i < NTHREAD; i++){
-			t = &p->threads[i];
-			if(tclear(t) == 0)
+			if(tclear(&p->threads[i]) == 0)
 			  panic("wait(): tclear error\n");
 		}
         freevm(p->pgdir); // t->ustack are also freed
@@ -383,16 +387,16 @@ scheduler(void)
       // before jumping back to us.
       c->proc = p;
 
-	  // Need to choose thread.
+	  // Need to choose thread in proc.
+	  // choose target index of p->threads[] 
 	  int next = tscheduler(p);
+
+	  // If not found, skip
 	  if(next == -1)
 		continue;
 
 	  t = &p->threads[next];
 	  p->curtidx = next;
-	  if(t->kstack == 0){
-		cprintf("NO kstack %d %d\n", p->pid, t->tid);
-	  }
       switchuvm(p);
 
 	  t->state = RUNNING;
@@ -426,8 +430,7 @@ sched(void)
     panic("sched ptable.lock");
   if(mycpu()->ncli != 1)
     panic("sched locks");
-  if(p->state == RUNNING){
-	cprintf("p: %d, t: %d\n", p->pid, t->tid);
+  if(t->state == RUNNING){
     panic("sched running");
   }
   if(readeflags()&FL_IF)
@@ -501,8 +504,6 @@ sleep(void *chan, struct spinlock *lk)
   t->chan = chan;
   t->state = SLEEPING;
 
-  // if every thread: SLEEPING -> p:SLEEPING
-
   sched();
 
   // Tidy up.
@@ -529,8 +530,6 @@ wakeup1(void *chan)
       if(t->state == SLEEPING && t->chan == chan){
       	t->state = RUNNABLE;
 	  }
-	// check and change p->state
-	// setpstate(p, RUNNABLE);
   }
 }
 
@@ -672,12 +671,12 @@ found:
   sp -= 4;
   *(uint*)sp = (uint)arg;
   sp -= 4;
-  *(uint*)sp = 0;
+  *(uint*)sp = 0xFFFFFFFF; // fake value
 
-  // setting routine
   p->sz = sz;
   nt->ustackp = sz;
-  nt->tf->eip = (uint)start_routine;	// start_routine
+  // setting start routine
+  nt->tf->eip = (uint)start_routine;
   nt->tf->esp = (uint)sp;
   nt->state = RUNNABLE;
 
@@ -727,7 +726,7 @@ found:
   // wait until target thread exit
   while(t->state != ZOMBIE)
 	sleep((void*)t->tid, &ptable.lock);
-  // now target thread exit
+  // now target-thread exit, pass return value
   *retval = t->ret;
   // clear thread
   tclear(t);
@@ -762,63 +761,6 @@ tscheduler(struct proc* p)
   }
   
   return next;
-}
-
-
-// setpstate() : check the every thread state and set p->state
-// only check about ZOMBIE, SLEEPING
-void
-setpstate(struct proc *p, enum procstate check)
-{
-  struct thread *t;
-  int flag = 1;
-  switch(check){
-	case SLEEPING:
-	  goto ISSLEEPING;
-	  break;
-	case ZOMBIE:
-	  goto ISZOMBIE;
-	  break;
-	case RUNNABLE:
-	  goto ISRUNNABLE;
-	  break;
-	default:
-	  panic("setpstate");
-	  break;
-  }
-  // default check RUNNABLE
-  goto ISRUNNABLE;
-
-ISSLEEPING: // if every created threads sleep, change p states: SLEEPING
-  for(t = p->threads; t < &p->threads[NTHREAD]; t++)
-	if(t->state != UNUSED && t->state != SLEEPING){
-	  flag = 0;
-	  break;
-	}
-  if(flag)
-	p->state = SLEEPING;
-  return;
-
-ISZOMBIE: // if every created threads are zombie, change p states: ZOMBIE
-  for(t = p->threads; t < &p->threads[NTHREAD]; t++)
-	if(t->state != UNUSED && t->state != ZOMBIE){
-	  flag = 0;
-	  break;
-	}
-  if(flag)
-	p->state = ZOMBIE;
-  return;
- 
-ISRUNNABLE: // if any threads are runnable, change p states: RUNNABLE
-  flag = 0;
-  for(t = p->threads; t < &p->threads[NTHREAD]; t++)
-	if(t->state == RUNNABLE){
-	  flag = 1;
-	  break;
-	}
-  if(flag)
-	p->state = RUNNABLE;
-  return;
 }
 
 // tclear(): clear thread's info and allocated kstack (not ustack)

@@ -10,7 +10,6 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
-enum procstate;
 typedef int thread_t;
 
 // bio.c
@@ -127,7 +126,6 @@ int				thread_create(thread_t*, void*(*)(void*), void*);
 void			thread_exit(void*);
 int				thread_join(thread_t, void**);
 int				tscheduler(struct proc*);
-void			setpstate(struct proc*, enum procstate);
 int				tclear(struct thread*);
 
 // swtch.S
