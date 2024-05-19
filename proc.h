@@ -60,7 +60,7 @@ struct proc {
   char name[16];               // Process name (debugging)
 
   struct thread threads[NTHREAD];	// Thread pool
-  int curtidx;						// current running tid
+  int curtidx;						// current running thread index
 };
 
 // Process memory is laid out contiguously, low addresses first:

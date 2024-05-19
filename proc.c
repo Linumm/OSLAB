@@ -331,11 +331,11 @@ wait(void)
         pid = p->pid;
 		// clear Thread pool
 		for(int i = 0; i < NTHREAD; i++){
-			if(tclear(&p->threads[i]) == 0)
-			  panic("wait(): tclear error\n");
+		  if(tclear(&p->threads[i]) == 0)
+			panic("wait(): tclear error\n");
 		}
         freevm(p->pgdir); // t->ustack are also freed
-        p->pid = 0;
+		p->pid = 0;
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
@@ -397,11 +397,11 @@ scheduler(void)
 
 	  t = &p->threads[next];
 	  p->curtidx = next;
-      switchuvm(p);
+	  switchuvm(p);
 
 	  t->state = RUNNING;
-      swtch(&(c->scheduler), t->context);
-      switchkvm();
+	  swtch(&(c->scheduler), t->context);
+	  switchkvm();
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
