@@ -156,13 +156,9 @@ switchkvm(void)
 void
 switchuvm(struct proc *p)
 {
-  struct thread *t = &p->threads[p->curtidx];
-
   if(p == 0)
     panic("switchuvm: no process");
-  if(t == 0)
-	panic("switchuvm: no thread");
-  if(t->kstack == 0)
+  if(p->kstack == 0)
     panic("switchuvm: no kstack");
   if(p->pgdir == 0)
     panic("switchuvm: no pgdir");
@@ -172,7 +168,7 @@ switchuvm(struct proc *p)
                                 sizeof(mycpu()->ts)-1, 0);
   mycpu()->gdt[SEG_TSS].s = 0;
   mycpu()->ts.ss0 = SEG_KDATA << 3;
-  mycpu()->ts.esp0 = (uint)t->kstack + KSTACKSIZE;
+  mycpu()->ts.esp0 = (uint)p->kstack + KSTACKSIZE;
   // setting IOPL=0 in eflags *and* iomb beyond the tss segment limit
   // forbids I/O instructions (e.g., inb and outb) from user space
   mycpu()->ts.iomb = (ushort) 0xFFFF;
@@ -387,6 +383,146 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
     va = va0 + PGSIZE;
   }
   return 0;
+}
+
+// copypgdir: copy pgdir not by creating new page and mem-mov
+// make every page flag -> read-only, then return new pgdir copy-pointing
+pde_t*
+copypgdir(pde_t *pgdir, uint sz)
+{
+  pde_t *d;
+  pte_t *pte;
+  uint pa, i, flags;
+  
+  if((d = setupkvm()) == 0)
+	return 0;
+  for(i = 0; i < sz; i += PGSIZE){
+	if((pte = walkpgdir(pgdir, (void*)i, 0)) == 0)
+	  panic("copypoint: pte should exist");
+	if(!(*pte & PTE_P))
+	  panic("copypoint: page not present");
+	// modify entry flag PTE_W -> off (read-only)
+	*pte &= ~PTE_W;
+
+	pa = PTE_ADDR(*pte);
+	flags = PTE_FLAGS(*pte);
+	if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0){
+	  panic("copypoint: mapping error");
+	}
+	incr_refc(i);
+  }
+  lcr3(V2P(pgdir));
+  return d;
+}
+
+// CoW_handler: lazy copy of page
+// decrease reference count of the page
+void
+CoW_handler(void)
+{
+  uint fva = rcr2();
+  char* mem;
+  struct proc* p = myproc();
+  pte_t *pte;
+  uint pa;
+  int refc;
+
+  if((pte = walkpgdir(p->pgdir, (void*)fva, 0)) == 0)
+	panic("CoW_handler: pte should exist");
+  if(!(*pte & PTE_P))
+	panic("CoW_handler: page not present");
+
+  // 2 cases
+  if((refc = get_refc(fva)) == 1){ // 1: try to write at refc 1
+	// modify this page writable
+	*pte |= PTE_W;
+  }
+  else if(refc > 1){ // 2: child try to write at refc > 1
+    pa = PTE_ADDR(*pte);
+    if((mem = kalloc()) == 0){
+	  cprintf("CoW_handler: kalloc fail\n");
+	  return;
+    }
+    memmove(mem, (char*)P2V(pa), PGSIZE);
+	*pte = V2P(mem) | PTE_P | PTE_U | PTE_W;
+  }
+  lcr3(V2P(p->pgdir));
+}
+
+int
+scountvp(void)
+{
+  struct proc* p = myproc();
+  if(p == 0)
+	return -1;
+  return (p->sz / PGSIZE);
+}
+
+int
+scountpp(void)
+{
+  struct proc* p = myproc();
+  if(p == 0)
+	return -1;
+
+  int count = 0;
+  uint v = 0;
+  pte_t* pte;
+
+  for(; v < p->sz; v += PGSIZE){
+	if((pte = walkpgdir(p->pgdir, (void*)v, 0)) != 0 && (*pte & PTE_P) == 1)
+	  // if pte exists & present, incr count
+	  count++;
+  }
+
+  return count;
+}
+
+int
+scountptp(void)
+{
+  struct proc *p = myproc();
+  if(p == 0)
+	return -1;
+
+  int count = 0;
+  uint v = 0;
+  pte_t* pte;
+
+  // 1. the num of page allocated by pt
+  for(; v < p->sz; v += PGSIZE){
+	if((pte = walkpgdir(p->pgdir, (void*)v, 0)) != 0 && (*pte & PTE_P) == 1)
+	  count++;
+  }
+
+  // 2. the num of page used for pgdir, pgtable
+  count++; // pgdir -> 1 page
+
+  return 1;
+}
+
+
+// LAZY ALLOCATION
+void
+lazyalloc(struct proc* p, uint va)
+{
+  uint tmp;
+  uint rdv = PGROUNDDOWN(va);
+  uint ruv = PGROUNDUP(va);
+  if((tmp = allocuvm(p->pgdir, p->sz - rdv, ruv)) == 0){
+	cprintf("lazyalloc(): failed\n");
+	return;
+  }
+  p->sz = tmp;
+  /*
+  char *mem = kalloc();
+  if(mem == 0){
+    cprintf("lazyalloc(): out of memory\n");
+	return -1;
+  }
+  memset(mem, 0, PGSIZE);
+  mappages(p->pgdir, (char*)rdv, PGSIZE, V2P(mem), PTE_W|PTE_U);
+ */
 }
 
 //PAGEBREAK!

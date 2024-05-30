@@ -21,6 +21,8 @@ struct {
   struct spinlock lock;
   int use_lock;
   struct run *freelist;
+  int num_free;
+  unsigned char pgref[PHYSTOP >> PTXSHIFT];
 } kmem;
 
 // Initialization happens in two phases.
@@ -33,6 +35,7 @@ kinit1(void *vstart, void *vend)
 {
   initlock(&kmem.lock, "kmem");
   kmem.use_lock = 0;
+  kmem.num_free = 0;
   freerange(vstart, vend);
 }
 
@@ -48,8 +51,10 @@ freerange(void *vstart, void *vend)
 {
   char *p;
   p = (char*)PGROUNDUP((uint)vstart);
-  for(; p + PGSIZE <= (char*)vend; p += PGSIZE)
+  for(; p + PGSIZE <= (char*)vend; p += PGSIZE){
+	kmem.pgref[V2P(p) >> PTXSHIFT] = 0;
     kfree(p);
+  }
 }
 //PAGEBREAK: 21
 // Free the page of physical memory pointed at by v,
@@ -69,9 +74,17 @@ kfree(char *v)
 
   if(kmem.use_lock)
     acquire(&kmem.lock);
-  r = (struct run*)v;
-  r->next = kmem.freelist;
-  kmem.freelist = r;
+
+  if(kmem.pgref[V2P(v)] > 1)
+	kmem.pgref[V2P(v)]--;
+  else{
+	memset(v, 1, PGSIZE);
+    r = (struct run*)v;
+    r->next = kmem.freelist;
+    kmem.pgref[V2P(v)] = 0;
+    kmem.num_free++;
+    kmem.freelist = r;
+  }
   if(kmem.use_lock)
     release(&kmem.lock);
 }
@@ -87,10 +100,68 @@ kalloc(void)
   if(kmem.use_lock)
     acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+	kmem.pgref[V2P((char*)r) >> PTXSHIFT] = 1;
+	kmem.num_free--;
+  }
   if(kmem.use_lock)
     release(&kmem.lock);
   return (char*)r;
 }
 
+// Required Implementation
+void 
+incr_refc(uint va)
+{
+  if(kmem.use_lock)
+	acquire(&kmem.lock);
+
+  kmem.pgref[V2P(va) >> PTXSHIFT]++;
+  
+  if(kmem.use_lock)
+	release(&kmem.lock);
+}
+
+void
+decr_refc(uint va)
+{
+  if(kmem.use_lock)
+	acquire(&kmem.lock);
+
+  if(kmem.pgref[V2P(va) >> PTXSHIFT] > 0)
+  	kmem.pgref[V2P(va) >> PTXSHIFT]--;
+
+  if(kmem.use_lock)
+	release(&kmem.lock);
+}
+
+int
+get_refc(uint va)
+{
+  int ret = -1;
+  if(kmem.use_lock)
+	acquire(&kmem.lock);
+
+  ret = kmem.pgref[V2P(va) >> PTXSHIFT];
+
+  if(kmem.use_lock)
+	release(&kmem.lock);
+
+  return ret;
+}
+
+int
+scountfp(void)
+{
+  int ret = -1;
+  if(kmem.use_lock)
+	acquire(&kmem.lock);
+
+  ret = kmem.num_free;
+
+  if(kmem.use_lock)
+	release(&kmem.lock);
+
+  return ret;
+}

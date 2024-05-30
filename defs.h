@@ -4,13 +4,11 @@ struct file;
 struct inode;
 struct pipe;
 struct proc;
-struct thread;
 struct rtcdate;
 struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
-typedef int thread_t;
 
 // bio.c
 void            binit(void);
@@ -70,6 +68,10 @@ char*           kalloc(void);
 void            kfree(char*);
 void            kinit1(void*, void*);
 void            kinit2(void*, void*);
+void			incr_refc(uint);
+void			decr_refc(uint);
+int				get_refc(uint);
+int				scountfp(void);
 
 // kbd.c
 void            kbdintr(void);
@@ -122,11 +124,6 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
-int				thread_create(thread_t*, void*(*)(void*), void*);
-void			thread_exit(void*);
-int				thread_join(thread_t, void**);
-int				tscheduler(struct proc*);
-int				tclear(struct thread*);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -192,6 +189,12 @@ void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
+pde_t*			copypgdir(pde_t*, uint);
+void			CoW_handler(void);
+int				scountvp(void);
+int				scountpp(void);
+int				scountptp(void);
+void			lazyalloc(struct proc*, uint);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

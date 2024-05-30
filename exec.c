@@ -18,18 +18,6 @@ exec(char *path, char **argv)
   struct proghdr ph;
   pde_t *pgdir, *oldpgdir;
   struct proc *curproc = myproc();
-  struct thread *t;
-  struct thread *curt = &curproc->threads[curproc->curtidx];
-
-  // Clear every other thread first and copy current thread tid
-  // to assign it to default-thread
-  for(t = curproc->threads; t < &curproc->threads[NTHREAD]; t++){
-	// clear every thread except current thread
-	if(t == curt)
-	  continue;
-	if(tclear(t) == 0)
-	  panic("exec(): tclear error\n");
-  }
 
   begin_op();
 
@@ -109,11 +97,8 @@ exec(char *path, char **argv)
   oldpgdir = curproc->pgdir;
   curproc->pgdir = pgdir;
   curproc->sz = sz;
-  // Reset current thread info
-  curt->ustackp = sz;
-  curt->tf->eip = elf.entry;  // main
-  curt->tf->esp = sp;
-
+  curproc->tf->eip = elf.entry;  // main
+  curproc->tf->esp = sp;
   switchuvm(curproc);
   freevm(oldpgdir);
   return 0;

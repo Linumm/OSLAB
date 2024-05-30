@@ -5,7 +5,6 @@
 ./bio.c
 ./bootasm.S
 ./sleeplock.c
-./vectors.S
 ./sysfile.c
 ./file.c
 ./trap.c

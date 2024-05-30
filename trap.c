@@ -39,10 +39,7 @@ trap(struct trapframe *tf)
   if(tf->trapno == T_SYSCALL){
     if(myproc()->killed)
       exit();
-    if(myproc() != 0){
-	  struct thread *t = &myproc()->threads[myproc()->curtidx];
-	  t->tf = tf;
-	}
+    myproc()->tf = tf;
     syscall();
     if(myproc()->killed)
       exit();
@@ -80,7 +77,18 @@ trap(struct trapframe *tf)
             cpuid(), tf->cs, tf->eip);
     lapiceoi();
     break;
-
+/*
+  [lab14-lazy allocation sample]
+  case T_PGFLT:
+	uint va = rcr2();
+	struct proc* curproc = myproc();
+	lazyalloc(curproc, va);
+	switchuvm(curproc);
+	break;
+*/
+  case T_PGFLT:
+	CoW_handler();
+	break;
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){
@@ -105,7 +113,7 @@ trap(struct trapframe *tf)
 
   // Force process to give up CPU on clock tick.
   // If interrupts were on while locks held, would need to check nlock.
-  if(myproc() && myproc()->threads[myproc()->curtidx].state == RUNNING &&
+  if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER)
     yield();
 
