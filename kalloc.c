@@ -103,6 +103,7 @@ kalloc(void)
   if(r){
 	kmem.pgref[V2P((uint)r) >> PTXSHIFT] = 1;
     kmem.freelist = r->next;
+	kmem.num_free--;
   }
   if(kmem.use_lock)
     release(&kmem.lock);
@@ -114,7 +115,9 @@ incr_refc(uint pa)
 {
   if(kmem.use_lock)
 	acquire(&kmem.lock);
+  
   kmem.pgref[pa >> PTXSHIFT]++;
+  
   if(kmem.use_lock)
 	release(&kmem.lock);
 }
@@ -124,7 +127,9 @@ decr_refc(uint pa)
 {
   if(kmem.use_lock)
 	acquire(&kmem.lock);
+  
   kmem.pgref[pa >> PTXSHIFT]--;
+  
   if(kmem.use_lock)
 	release(&kmem.lock);
 }
@@ -135,7 +140,23 @@ get_refc(uint pa)
   int ret = 0;
   if(kmem.use_lock)
 	acquire(&kmem.lock);
+
   ret = kmem.pgref[pa >> PTXSHIFT];
+  
+  if(kmem.use_lock)
+	release(&kmem.lock);
+  return ret;
+}
+
+int
+scountfp(void)
+{
+  int ret = 0;
+  if(kmem.use_lock)
+	acquire(&kmem.lock);
+
+  ret = kmem.num_free;
+  
   if(kmem.use_lock)
 	release(&kmem.lock);
   return ret;

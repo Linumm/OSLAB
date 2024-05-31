@@ -428,6 +428,70 @@ CoW_handler()
   lcr3(V2P(p->pgdir));
 }
 
+int
+scountvp(void)
+{
+  struct proc *p = myproc();
+  if(p == 0)
+	return -1;
+  
+  int count = 0;
+  uint va = 0;
+
+  for(; va < p->sz; va += PGSIZE)
+	count++;
+  return count;
+}
+
+int
+scountpp(void)
+{
+  struct proc *p = myproc();
+  if(p == 0)
+	return -1;
+
+  int count = 0;
+  uint va = 0;
+  pte_t *pte;
+
+  for(; va < p->sz; va += PGSIZE){
+	// if pte exists & present, incr count
+	if((pte = walkpgdir(p->pgdir, (void*)va, 0)) != 0 && (*pte & PTE_P))
+	  count++;
+  }
+
+  return count;
+}
+
+int
+scountptp(void)
+{
+  struct proc *p = myproc();
+  if(p == 0)
+	return -1;
+
+  int count = 0;
+  uint va = 0;
+  pte_t *pte;
+
+  // 1. the num of page allocated by page table
+  for(; va < p->sz; va += PGSIZE){
+	if((pte = walkpgdir(p->pgdir, (void*)va, 0)) != 0 && (*pte & PTE_P))
+	  count++;
+  }
+
+  // 2. the num of page used for page directory / table
+  // if(p->pgdir) count++;
+
+  pde_t *pde;
+  for(uint pdx = 0; pdx < 1024; pdx++){
+	pde = &p->pgdir[pdx];
+	if(*pde & PTE_P)
+	  count++;
+  }
+
+  return count;
+}
 //PAGEBREAK!
 // Blank page.
 //PAGEBREAK!
