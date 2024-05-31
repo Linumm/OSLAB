@@ -77,18 +77,11 @@ trap(struct trapframe *tf)
             cpuid(), tf->cs, tf->eip);
     lapiceoi();
     break;
-/*
-  [lab14-lazy allocation sample]
-  case T_PGFLT:
-	uint va = rcr2();
-	struct proc* curproc = myproc();
-	lazyalloc(curproc, va);
-	switchuvm(curproc);
-	break;
-*/
+	
   case T_PGFLT:
 	CoW_handler();
 	break;
+
   //PAGEBREAK: 13
   default:
     if(myproc() == 0 || (tf->cs&3) == 0){

@@ -285,12 +285,6 @@ tar:
 
 .PHONY: dist-test dist
 
-aso:
-	make clean
-	make
-	make fs.img
-	qemu-system-i386 -nographic -serial mon:stdio -hdb fs.img xv6.img -smp 1 -m 512
-
 boot:
 	make
 	qemu-system-i386 -nographic -serial mon:stdio -hdb fs.img xv6.img -smp 1 -m 512

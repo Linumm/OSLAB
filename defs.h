@@ -71,7 +71,6 @@ void            kinit2(void*, void*);
 void			incr_refc(uint);
 void			decr_refc(uint);
 int				get_refc(uint);
-int				scountfp(void);
 
 // kbd.c
 void            kbdintr(void);
@@ -189,12 +188,7 @@ void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
-pde_t*			copypgdir(pde_t*, uint);
 void			CoW_handler(void);
-int				scountvp(void);
-int				scountpp(void);
-int				scountptp(void);
-void			lazyalloc(struct proc*, uint);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

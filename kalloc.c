@@ -21,10 +21,11 @@ struct {
   struct spinlock lock;
   int use_lock;
   struct run *freelist;
-  int num_free;
-  unsigned char pgref[PHYSTOP >> PTXSHIFT];
+  uint num_free;
+  uint pgref[PHYSTOP >> PTXSHIFT];
 } kmem;
 
+//uint pgref[PHYSTOP >> PTXSHIFT];
 // Initialization happens in two phases.
 // 1. main() calls kinit1() while still using entrypgdir to place just
 // the pages mapped by entrypgdir on free list.
@@ -70,20 +71,19 @@ kfree(char *v)
     panic("kfree");
 
   // Fill with junk to catch dangling refs.
-  memset(v, 1, PGSIZE);
+  //memset(v, 1, PGSIZE);
 
   if(kmem.use_lock)
     acquire(&kmem.lock);
 
-  if(kmem.pgref[V2P(v)] > 1)
-	kmem.pgref[V2P(v)]--;
-  else{
+  if(kmem.pgref[V2P(v) >> PTXSHIFT] > 0)
+	kmem.pgref[V2P(v) >> PTXSHIFT]--;
+  if(kmem.pgref[V2P(v) >> PTXSHIFT] == 0){
 	memset(v, 1, PGSIZE);
-    r = (struct run*)v;
-    r->next = kmem.freelist;
-    kmem.pgref[V2P(v)] = 0;
-    kmem.num_free++;
-    kmem.freelist = r;
+  	r = (struct run*)v;
+  	r->next = kmem.freelist;
+  	kmem.freelist = r;
+	kmem.num_free++;
   }
   if(kmem.use_lock)
     release(&kmem.lock);
@@ -101,67 +101,42 @@ kalloc(void)
     acquire(&kmem.lock);
   r = kmem.freelist;
   if(r){
+	kmem.pgref[V2P((uint)r) >> PTXSHIFT] = 1;
     kmem.freelist = r->next;
-	kmem.pgref[V2P((char*)r) >> PTXSHIFT] = 1;
-	kmem.num_free--;
   }
   if(kmem.use_lock)
     release(&kmem.lock);
   return (char*)r;
 }
 
-// Required Implementation
-void 
-incr_refc(uint va)
+void
+incr_refc(uint pa)
 {
   if(kmem.use_lock)
 	acquire(&kmem.lock);
-
-  kmem.pgref[V2P(va) >> PTXSHIFT]++;
-  
+  kmem.pgref[pa >> PTXSHIFT]++;
   if(kmem.use_lock)
 	release(&kmem.lock);
 }
 
 void
-decr_refc(uint va)
+decr_refc(uint pa)
 {
   if(kmem.use_lock)
 	acquire(&kmem.lock);
-
-  if(kmem.pgref[V2P(va) >> PTXSHIFT] > 0)
-  	kmem.pgref[V2P(va) >> PTXSHIFT]--;
-
+  kmem.pgref[pa >> PTXSHIFT]--;
   if(kmem.use_lock)
 	release(&kmem.lock);
 }
 
 int
-get_refc(uint va)
+get_refc(uint pa)
 {
-  int ret = -1;
+  int ret = 0;
   if(kmem.use_lock)
 	acquire(&kmem.lock);
-
-  ret = kmem.pgref[V2P(va) >> PTXSHIFT];
-
+  ret = kmem.pgref[pa >> PTXSHIFT];
   if(kmem.use_lock)
 	release(&kmem.lock);
-
-  return ret;
-}
-
-int
-scountfp(void)
-{
-  int ret = -1;
-  if(kmem.use_lock)
-	acquire(&kmem.lock);
-
-  ret = kmem.num_free;
-
-  if(kmem.use_lock)
-	release(&kmem.lock);
-
   return ret;
 }

@@ -162,7 +162,6 @@ growproc(int n)
   struct proc *curproc = myproc();
 
   sz = curproc->sz;
-  
   if(n > 0){
     if((sz = allocuvm(curproc->pgdir, sz, sz + n)) == 0)
       return -1;
@@ -171,7 +170,6 @@ growproc(int n)
       return -1;
   }
   curproc->sz = sz;
-  //curproc->sz = sz + n;
   switchuvm(curproc);
   return 0;
 }
@@ -186,21 +184,17 @@ fork(void)
   struct proc *np;
   struct proc *curproc = myproc();
 
-
   // Allocate process.
   if((np = allocproc()) == 0){
     return -1;
   }
-  /*
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0)
-  */
 
-  // Copy pgdir from proc then copy state.
-  if((np->pgdir = copypgdir(curproc->pgdir, curproc->sz)) == 0){
-	kfree(np->kstack);
-	np->kstack = 0;
-	np->state = UNUSED;
-	return -1;
+  // Copy process state from proc.
+  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
+    kfree(np->kstack);
+    np->kstack = 0;
+    np->state = UNUSED;
+    return -1;
   }
   np->sz = curproc->sz;
   np->parent = curproc;

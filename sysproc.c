@@ -89,29 +89,3 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
-
-// P4 - page syscall
-int
-sys_countfp(void)
-{
-  return scountfp();
-}
-
-int
-sys_countvp(void)
-{
-  return scountvp();
-}
-
-int
-sys_countpp(void)
-{
-  return scountpp();
-}
-
-int
-sys_countptp(void)
-{
-  return scountptp();
-}
-

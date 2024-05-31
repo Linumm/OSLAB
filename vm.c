@@ -318,7 +318,7 @@ copyuvm(pde_t *pgdir, uint sz)
   pde_t *d;
   pte_t *pte;
   uint pa, i, flags;
-  char *mem;
+  //char *mem;
 
   if((d = setupkvm()) == 0)
     return 0;
@@ -327,20 +327,27 @@ copyuvm(pde_t *pgdir, uint sz)
       panic("copyuvm: pte should exist");
     if(!(*pte & PTE_P))
       panic("copyuvm: page not present");
+	*pte &= ~PTE_W;
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
+	/*
     if((mem = kalloc()) == 0)
       goto bad;
     memmove(mem, (char*)P2V(pa), PGSIZE);
-    if(mappages(d, (void*)i, PGSIZE, V2P(mem), flags) < 0) {
-      kfree(mem);
+	*/
+    if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0) {
+      //kfree(mem);
+	  cprintf("copyuvm(): mappages fail\n");
       goto bad;
     }
+	incr_refc(pa);
   }
+  lcr3(V2P(pgdir));
   return d;
 
 bad:
   freevm(d);
+  lcr3(V2P(pgdir));
   return 0;
 }
 
@@ -385,144 +392,40 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
   return 0;
 }
 
-// copypgdir: copy pgdir not by creating new page and mem-mov
-// make every page flag -> read-only, then return new pgdir copy-pointing
-pde_t*
-copypgdir(pde_t *pgdir, uint sz)
-{
-  pde_t *d;
-  pte_t *pte;
-  uint pa, i, flags;
-  
-  if((d = setupkvm()) == 0)
-	return 0;
-  for(i = 0; i < sz; i += PGSIZE){
-	if((pte = walkpgdir(pgdir, (void*)i, 0)) == 0)
-	  panic("copypoint: pte should exist");
-	if(!(*pte & PTE_P))
-	  panic("copypoint: page not present");
-	// modify entry flag PTE_W -> off (read-only)
-	*pte &= ~PTE_W;
-
-	pa = PTE_ADDR(*pte);
-	flags = PTE_FLAGS(*pte);
-	if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0){
-	  panic("copypoint: mapping error");
-	}
-	incr_refc(i);
-  }
-  lcr3(V2P(pgdir));
-  return d;
-}
-
-// CoW_handler: lazy copy of page
-// decrease reference count of the page
 void
-CoW_handler(void)
+CoW_handler()
 {
   uint fva = rcr2();
-  char* mem;
-  struct proc* p = myproc();
   pte_t *pte;
   uint pa;
-  int refc;
+  char *mem;
+  struct proc *p = myproc();
+  
+  if(p == 0)
+	panic("CoW_handler: No proc");
 
   if((pte = walkpgdir(p->pgdir, (void*)fva, 0)) == 0)
 	panic("CoW_handler: pte should exist");
-  if(!(*pte & PTE_P))
+  if(!(*pte & PTE_P)){
+	cprintf("Cur proc: %s %d\n", p->name, p->pid);
 	panic("CoW_handler: page not present");
+  }
 
-  // 2 cases
-  if((refc = get_refc(fva)) == 1){ // 1: try to write at refc 1
-	// modify this page writable
+  int refc = get_refc(V2P(fva));
+  if(refc == 1){ // cause: parent try to write on read-only page
 	*pte |= PTE_W;
   }
-  else if(refc > 1){ // 2: child try to write at refc > 1
-    pa = PTE_ADDR(*pte);
-    if((mem = kalloc()) == 0){
-	  cprintf("CoW_handler: kalloc fail\n");
+  else if(refc > 1){ // cause: child needs copy page
+	pa = PTE_ADDR(*pte);
+	if((mem = kalloc()) == 0)
 	  return;
-    }
-    memmove(mem, (char*)P2V(pa), PGSIZE);
+	memmove(mem, (char*)P2V(pa), PGSIZE);
 	*pte = V2P(mem) | PTE_P | PTE_U | PTE_W;
+	
+	// now out from origin page, decr ref count of page
+	decr_refc(pa);
   }
   lcr3(V2P(p->pgdir));
-}
-
-int
-scountvp(void)
-{
-  struct proc* p = myproc();
-  if(p == 0)
-	return -1;
-  return (p->sz / PGSIZE);
-}
-
-int
-scountpp(void)
-{
-  struct proc* p = myproc();
-  if(p == 0)
-	return -1;
-
-  int count = 0;
-  uint v = 0;
-  pte_t* pte;
-
-  for(; v < p->sz; v += PGSIZE){
-	if((pte = walkpgdir(p->pgdir, (void*)v, 0)) != 0 && (*pte & PTE_P) == 1)
-	  // if pte exists & present, incr count
-	  count++;
-  }
-
-  return count;
-}
-
-int
-scountptp(void)
-{
-  struct proc *p = myproc();
-  if(p == 0)
-	return -1;
-
-  int count = 0;
-  uint v = 0;
-  pte_t* pte;
-
-  // 1. the num of page allocated by pt
-  for(; v < p->sz; v += PGSIZE){
-	if((pte = walkpgdir(p->pgdir, (void*)v, 0)) != 0 && (*pte & PTE_P) == 1)
-	  count++;
-  }
-
-  // 2. the num of page used for pgdir, pgtable
-  count++; // pgdir -> 1 page
-
-  return 1;
-}
-
-
-// LAZY ALLOCATION
-void
-lazyalloc(struct proc* p, uint va)
-{
-  uint tmp;
-  uint rdv = PGROUNDDOWN(va);
-  uint ruv = PGROUNDUP(va);
-  if((tmp = allocuvm(p->pgdir, p->sz - rdv, ruv)) == 0){
-	cprintf("lazyalloc(): failed\n");
-	return;
-  }
-  p->sz = tmp;
-  /*
-  char *mem = kalloc();
-  if(mem == 0){
-    cprintf("lazyalloc(): out of memory\n");
-	return -1;
-  }
-  memset(mem, 0, PGSIZE);
-  mappages(p->pgdir, (char*)rdv, PGSIZE, V2P(mem), PTE_W|PTE_U);
- */
 }
 
 //PAGEBREAK!
