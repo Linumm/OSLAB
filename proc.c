@@ -290,6 +290,7 @@ wait(void)
         kfree(p->kstack);
         p->kstack = 0;
         freevm(p->pgdir);
+		cprintf("reaped: %d\n", p->pid);
         p->pid = 0;
         p->parent = 0;
         p->name[0] = 0;

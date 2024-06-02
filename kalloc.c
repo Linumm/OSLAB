@@ -70,21 +70,22 @@ kfree(char *v)
   if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
     panic("kfree");
 
-  // Fill with junk to catch dangling refs.
-  //memset(v, 1, PGSIZE);
-
   if(kmem.use_lock)
     acquire(&kmem.lock);
 
-  if(kmem.pgref[V2P(v) >> PTXSHIFT] > 0)
-	kmem.pgref[V2P(v) >> PTXSHIFT]--;
-  if(kmem.pgref[V2P(v) >> PTXSHIFT] == 0){
+  uint *refc = &kmem.pgref[V2P(v) >> PTXSHIFT];
+  // if reference count > 0, abstractly free. (decr ref count)
+  // then if 0, free page and link it to freelist.
+  if(*refc > 0)
+	*refc -= 1;
+  if(*refc == 0){
 	memset(v, 1, PGSIZE);
   	r = (struct run*)v;
   	r->next = kmem.freelist;
   	kmem.freelist = r;
 	kmem.num_free++;
   }
+
   if(kmem.use_lock)
     release(&kmem.lock);
 }

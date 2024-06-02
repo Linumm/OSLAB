@@ -407,7 +407,6 @@ CoW_handler()
   if((pte = walkpgdir(p->pgdir, (void*)fva, 0)) == 0)
 	panic("CoW_handler: pte should exist");
   if(!(*pte & PTE_P)){
-	cprintf("Cur proc: %s %d\n", p->name, p->pid);
 	panic("CoW_handler: page not present");
   }
 
@@ -471,23 +470,17 @@ scountptp(void)
 	return -1;
 
   int count = 0;
-  uint va = 0;
-  pte_t *pte;
+  uint pdx;
 
-  // 1. the num of page allocated by page table
-  for(; va < p->sz; va += PGSIZE){
-	if((pte = walkpgdir(p->pgdir, (void*)va, 0)) != 0 && (*pte & PTE_P))
-	  count++;
-  }
+  // 1. the num of page for page directory
+  // since 32-bit adrs, one page directory is used.
+  if(*p->pgdir & PTE_P) count++;
 
-  // 2. the num of page used for page directory / table
-  // if(p->pgdir) count++;
-
+  // 2. the num of page used for page table
   pde_t *pde;
-  for(uint pdx = 0; pdx < 1024; pdx++){
+  for(pdx = 0; pdx < NPDENTRIES; pdx++){
 	pde = &p->pgdir[pdx];
-	if(*pde & PTE_P)
-	  count++;
+	if(*pde & PTE_P) count++;
   }
 
   return count;

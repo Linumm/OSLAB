@@ -9,6 +9,7 @@ main(int argc, char *argv[])
 {
   printf(1, "[Test 2] Make a Copy\n");
   int pid;
+  printf(1, "Before fp: %d\n", countfp());
 
   pid = fork();
   if(pid == 0){
@@ -25,6 +26,7 @@ main(int argc, char *argv[])
   }
   else{
     wait();
+	printf(1, "After fp: %d\n", countfp());
   }
 
   exit();
