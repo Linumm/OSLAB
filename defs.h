@@ -70,7 +70,7 @@ void            kinit1(void*, void*);
 void            kinit2(void*, void*);
 void			incr_refc(uint);
 void			decr_refc(uint);
-int				get_refc(uint);
+uint			get_refc(uint);
 int				scountfp(void);
 
 // kbd.c

@@ -117,7 +117,7 @@ incr_refc(uint pa)
   if(kmem.use_lock)
 	acquire(&kmem.lock);
   
-  kmem.pgref[pa >> PTXSHIFT]++;
+  kmem.pgref[pa >> PTXSHIFT] += 1;
   
   if(kmem.use_lock)
 	release(&kmem.lock);
@@ -129,16 +129,16 @@ decr_refc(uint pa)
   if(kmem.use_lock)
 	acquire(&kmem.lock);
   
-  kmem.pgref[pa >> PTXSHIFT]--;
+  kmem.pgref[pa >> PTXSHIFT] -= 1;
   
   if(kmem.use_lock)
 	release(&kmem.lock);
 }
 
-int
+uint
 get_refc(uint pa)
 {
-  int ret = 0;
+  uint ret = 0;
   if(kmem.use_lock)
 	acquire(&kmem.lock);
 
@@ -155,7 +155,7 @@ scountfp(void)
   int ret = 0;
   if(kmem.use_lock)
 	acquire(&kmem.lock);
-
+  
   ret = kmem.num_free;
   
   if(kmem.use_lock)

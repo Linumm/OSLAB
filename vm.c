@@ -410,17 +410,20 @@ CoW_handler()
 	panic("CoW_handler: page not present");
   }
 
-  int refc = get_refc(V2P(fva));
+  pa = PTE_ADDR(*pte);
+  uint refc = get_refc(pa);
   if(refc == 1){ // cause: parent try to write on read-only page
 	*pte |= PTE_W;
   }
   else if(refc > 1){ // cause: child needs copy page
 	pa = PTE_ADDR(*pte);
+	//cprintf("Before CoW: %d\n", scountfp());
 	if((mem = kalloc()) == 0)
 	  return;
 	memmove(mem, (char*)P2V(pa), PGSIZE);
+	//cprintf("new mem refc %d\n", get_refc(V2P(mem)));
 	*pte = V2P(mem) | PTE_P | PTE_U | PTE_W;
-	
+	//cprintf("(%d) refc: %d, cow new page, %d\n", p->pid, refc, scountfp());
 	// now out from origin page, decr ref count of page
 	decr_refc(pa);
   }
@@ -450,15 +453,17 @@ scountpp(void)
 	return -1;
 
   int count = 0;
-  uint va = 0;
+  //uint pdx = 0;
+  //uint ptx = 0;
+  //pde_t *pde;
   pte_t *pte;
+  uint va = 0;
 
   for(; va < p->sz; va += PGSIZE){
 	// if pte exists & present, incr count
 	if((pte = walkpgdir(p->pgdir, (void*)va, 0)) != 0 && (*pte & PTE_P))
 	  count++;
   }
-
   return count;
 }
 
