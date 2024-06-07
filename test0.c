@@ -20,8 +20,6 @@ main(int argc, char* argv[])
   int numptpa = countptp();
   
   printf(1, "ptp: %d %d\n", numptp, numptpa);
-  printf(1, "fp: %d %d\n", numfp, numfpa);
-  printf(1, "vp: %d %d\n", numvp, numvpa);
   printf(1, "pp: %d %d\n", numpp, numppa);
 
   if((numvp == numpp) && (numvpa == numppa) && (numfp - numfpa == 1))

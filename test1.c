@@ -9,7 +9,6 @@ main(int argc, char *argv[])
   int pid;
 
   printf(1, "[Test 1] initial sharing\n");
-  printf(1, "Before fp: %d\n", countfp());
 	
   parent_fp = countfp();
 
@@ -27,8 +26,6 @@ main(int argc, char *argv[])
   }
   else{
     wait();
-	sleep(10);
-	printf(1, "After fp: %d\n", countfp());
   }
 
   exit();

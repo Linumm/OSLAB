@@ -4,7 +4,7 @@
 8010ff58 panicked
 80100400 consputc.part.0
 80100600 printint
-801076b0 digits.0
+80107690 digits.0
 00000000 exec.c
 00000000 file.c
 00000000 fs.c
@@ -22,9 +22,9 @@
 00000000 kalloc.c
 00000000 kbd.c
 8014a680 shift.1
-801079e0 shiftcode
-801078e0 togglecode
-801078c0 charcode.0
+801079c0 shiftcode
+801078c0 togglecode
+801078a0 charcode.0
 80109200 normalmap
 80109100 shiftmap
 80109000 ctlmap
@@ -43,12 +43,12 @@
 801039f0 allocproc
 8010b000 first.1
 8014cc54 initproc
-80107c8c states.0
+80107c6c states.0
 00000000 sleeplock.c
 00000000 spinlock.c
 00000000 string.c
 00000000 syscall.c
-80107d00 syscalls
+80107ce0 syscalls
 00000000 sysfile.c
 80104d10 create
 00000000 sysproc.c
@@ -60,8 +60,8 @@
 80106a40 deallocuvm.part.0
 80106af0 mappages
 8010b420 kmap
-80107618 uva2ka.cold
-8010761f copyout.cold
+80107608 uva2ka.cold
+8010760f copyout.cold
 80100280 consoleread
 8010698f vector242
 801063e6 vector119
@@ -234,7 +234,7 @@
 801064eb vector143
 80100e30 filealloc
 80104340 wakeup
-801075d0 scountptp
+801075c0 scountptp
 8010644f vector130
 801069bf vector246
 80106014 vector9
@@ -376,7 +376,7 @@
 80106179 vector50
 80106040 vector15
 80105aa0 sys_countpp
-80107500 scountvp
+801074f0 scountvp
 8010654b vector151
 801062a2 vector83
 801062d8 vector89
@@ -385,7 +385,7 @@
 80105a50 sys_uptime
 8010669b vector179
 801060e9 vector34
-80107540 scountpp
+80107530 scountpp
 80106155 vector46
 8010647f vector134
 801068ab vector223

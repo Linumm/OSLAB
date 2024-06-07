@@ -412,18 +412,16 @@ CoW_handler()
 
   pa = PTE_ADDR(*pte);
   uint refc = get_refc(pa);
-  if(refc == 1){ // cause: parent try to write on read-only page
+  if(refc == 1){ 
+	 // cause: parent try to write on read-only page
 	*pte |= PTE_W;
   }
-  else if(refc > 1){ // cause: child needs copy page
-	pa = PTE_ADDR(*pte);
-	//cprintf("Before CoW: %d\n", scountfp());
+  else if(refc > 1){ 
+	// cause: child needs copy page
 	if((mem = kalloc()) == 0)
 	  return;
 	memmove(mem, (char*)P2V(pa), PGSIZE);
-	//cprintf("new mem refc %d\n", get_refc(V2P(mem)));
 	*pte = V2P(mem) | PTE_P | PTE_U | PTE_W;
-	//cprintf("(%d) refc: %d, cow new page, %d\n", p->pid, refc, scountfp());
 	// now out from origin page, decr ref count of page
 	decr_refc(pa);
   }
@@ -453,9 +451,6 @@ scountpp(void)
 	return -1;
 
   int count = 0;
-  //uint pdx = 0;
-  //uint ptx = 0;
-  //pde_t *pde;
   pte_t *pte;
   uint va = 0;
 
